@@ -1,0 +1,16 @@
+telegram:
+  bot_token: "123456:ABC-DEF..."
+  chat_id: 12345678
+
+plugins:
+  toogoodtogo:
+    email: "user@example.com"
+    interval: "5m"
+    store_ids: ["abc123"]
+
+  btcprice:
+    interval: "1m"
+    above_usd: 100000.0
+    below_usd: 50000.0
+    change_percent: 5.0
+    cooldown: "30m"

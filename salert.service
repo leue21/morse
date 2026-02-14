@@ -1,0 +1,19 @@
+[Unit]
+Description=salert - plugin-based Telegram notification service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/salert -config /etc/salert/config.yaml
+Restart=on-failure
+RestartSec=10
+User=salert
+Group=salert
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/salert
+
+[Install]
+WantedBy=multi-user.target
