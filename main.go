@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -33,7 +34,9 @@ func main() {
 	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
 	sched := scheduler.New(tg)
 
-	buildPlugins(cfg, sched)
+	absConfig, _ := filepath.Abs(*configPath)
+	dataDir := filepath.Dir(absConfig)
+	buildPlugins(cfg, sched, dataDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -66,7 +69,7 @@ func buildCommandHandler(sched *scheduler.Scheduler) notifier.CommandHandler {
 	}
 }
 
-func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler) {
+func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler, dataDir string) {
 	if pc, ok := cfg.Plugins["btcprice"]; ok {
 		p := plugin.NewBTCPrice(
 			pc.GetFloat("above_usd"),
@@ -80,7 +83,7 @@ func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler) {
 	if pc, ok := cfg.Plugins["toogoodtogo"]; ok {
 		p := plugin.NewTooGoodToGo(
 			pc.GetString("email"),
-			pc.GetStringSlice("store_ids"),
+			dataDir,
 		)
 		sched.Add(p, pc.ParseInterval())
 	}

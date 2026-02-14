@@ -6,7 +6,6 @@ plugins:
   toogoodtogo:
     email: "user@example.com"
     interval: "5m"
-    store_ids: ["abc123"]
 
   btcprice:
     interval: "1m"

@@ -224,33 +224,4 @@ func TestBTCPriceDescribeEmpty(t *testing.T) {
 	}
 }
 
-// --- TooGoodToGo tests ---
-
-func TestTooGoodToGoName(t *testing.T) {
-	p := NewTooGoodToGo("a@b.com", []string{"s1"})
-	if p.Name() != "toogoodtogo" {
-		t.Errorf("Name() = %q, want %q", p.Name(), "toogoodtogo")
-	}
-}
-
-func TestTooGoodToGoDescribe(t *testing.T) {
-	p := NewTooGoodToGo("user@example.com", []string{"s1", "s2", "s3"})
-	desc := p.Describe()
-	if !strings.Contains(desc, "Email: user@example.com") {
-		t.Errorf("Describe() missing email, got:\n%s", desc)
-	}
-	if !strings.Contains(desc, "Stores: 3") {
-		t.Errorf("Describe() missing store count, got:\n%s", desc)
-	}
-}
-
-func TestTooGoodToGoCheckReturnsNil(t *testing.T) {
-	p := NewTooGoodToGo("a@b.com", []string{"s1"})
-	alerts, err := p.Check(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if alerts != nil {
-		t.Errorf("expected nil alerts from skeleton, got %v", alerts)
-	}
-}
+// TooGoodToGo tests are in toogoodtogo_test.go
