@@ -18,7 +18,13 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "path to config file")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		slog.Error("failed to get home directory", "error", err)
+		os.Exit(1)
+	}
+	defaultConfig := filepath.Join(home, ".config", "salert", "config.yaml")
+	configPath := flag.String("config", defaultConfig, "path to config file")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{

@@ -51,7 +51,6 @@ func newTestTGTG(t *testing.T, baseURL string) *TooGoodToGo {
 		email:        "test@example.com",
 		dataDir:      t.TempDir(),
 		client:       &http.Client{Timeout: 5 * time.Second},
-		userAgent:    "test",
 		accessToken:  "tok",
 		refreshToken: "ref",
 		userID:       "u1",
@@ -60,6 +59,7 @@ func newTestTGTG(t *testing.T, baseURL string) *TooGoodToGo {
 		seen:         make(map[string]bool),
 		baseURL:      baseURL,
 		datadomeURL:  baseURL + "/datadome",
+		readPin:      func() (string, error) { return "1234", nil },
 	}
 }
 
@@ -107,11 +107,11 @@ func TestSeenResetOnRestock(t *testing.T) {
 		HandleFunc("POST", "/item/v8/", func(w http.ResponseWriter, r *http.Request) {
 			call++
 			switch call {
-			case 1: // available
+			case 1:
 				w.Write([]byte(favoritesJSON(item{"1", "Baker", "Bread", 2})))
-			case 2: // sold out
+			case 2:
 				w.Write([]byte(favoritesJSON(item{"1", "Baker", "Bread", 0})))
-			case 3: // restocked
+			case 3:
 				w.Write([]byte(favoritesJSON(item{"1", "Baker", "Bread", 1})))
 			}
 		}).
@@ -119,19 +119,16 @@ func TestSeenResetOnRestock(t *testing.T) {
 
 	p := newTestTGTG(t, srv.URL())
 
-	// Check 1: should alert
 	alerts, _ := p.Check(context.Background())
 	if len(alerts) != 1 {
 		t.Fatalf("check 1: got %d alerts, want 1", len(alerts))
 	}
 
-	// Check 2: sold out, no alert, seen should be cleared
 	alerts, _ = p.Check(context.Background())
 	if len(alerts) != 0 {
 		t.Fatalf("check 2: got %d alerts, want 0", len(alerts))
 	}
 
-	// Check 3: restocked, should alert again
 	alerts, _ = p.Check(context.Background())
 	if len(alerts) != 1 {
 		t.Fatalf("check 3: got %d alerts, want 1", len(alerts))
@@ -155,7 +152,6 @@ func TestRefreshTokens(t *testing.T) {
 		t.Errorf("refreshToken = %q, want new_rt", p.refreshToken)
 	}
 
-	// Verify tokens were saved
 	data, err := os.ReadFile(filepath.Join(p.dataDir, "tgtg_tokens.json"))
 	if err != nil {
 		t.Fatalf("token file not saved: %v", err)
@@ -220,7 +216,7 @@ func TestGetFavoritesRetryOn403(t *testing.T) {
 			}
 			w.Write([]byte(favoritesJSON(item{"1", "Shop", "Bag", 1})))
 		}).
-		Handle("POST", "/datadome", 200, `{"cookie":"new_dd"}`).
+		Handle("POST", "/datadome", 200, `{"status":200,"cookie":"datadome=newdd; Path=/; Secure"}`).
 		Start()
 
 	p := newTestTGTG(t, srv.URL())
@@ -231,15 +227,14 @@ func TestGetFavoritesRetryOn403(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("got %d items, want 1", len(items))
 	}
-	if p.cookie != "new_dd" {
-		t.Errorf("cookie = %q, want new_dd", p.cookie)
+	if p.cookie != "newdd" {
+		t.Errorf("cookie = %q, want newdd", p.cookie)
 	}
 }
 
 func TestLoadSaveTokens(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create and save
 	p1 := &TooGoodToGo{
 		dataDir:      dir,
 		accessToken:  "at1",
@@ -250,7 +245,6 @@ func TestLoadSaveTokens(t *testing.T) {
 	}
 	p1.saveTokens()
 
-	// Load into new instance
 	p2 := &TooGoodToGo{dataDir: dir, seen: make(map[string]bool)}
 	p2.loadTokens()
 

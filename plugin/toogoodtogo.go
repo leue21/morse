@@ -1,15 +1,18 @@
 package plugin
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -20,13 +23,11 @@ type TooGoodToGo struct {
 	dataDir string // directory for tgtg_tokens.json
 	client  *http.Client
 
-	userAgent string
-
 	// auth state
 	accessToken  string
 	refreshToken string
 	userID       string
-	cookie       string // datadome cookie
+	cookie       string // datadome cookie value
 	lastRefresh  time.Time
 
 	// dedup — entry removed when stock drops to 0 so restock re-alerts
@@ -35,6 +36,10 @@ type TooGoodToGo struct {
 	// testing hooks
 	baseURL     string // default "https://apptoogoodtogo.com/api"
 	datadomeURL string // default "https://api-sdk.datadome.co/sdk/"
+
+	// readPin is a hook for reading the PIN from the user.
+	// In production this reads from stdin; tests can override it.
+	readPin func() (string, error)
 }
 
 type tgtgItem struct {
@@ -52,18 +57,38 @@ type tgtgTokens struct {
 	LastRefresh  time.Time `json:"last_refresh"`
 }
 
+const (
+	tgtgAPKVersion = "24.11.0"
+	tgtgUserAgent  = "TGTG/" + tgtgAPKVersion + " Dalvik/2.1.0 (Linux; U; Android 14; Pixel 7 Pro Build/UPSIDE_DOWN_CAKE)"
+	tgtgDDK        = "1D42C2CA6131C526E09F294FE96F94"
+)
+
+var datadomeCookieRe = regexp.MustCompile(`datadome=([^;]+)`)
+
 func NewTooGoodToGo(email, dataDir string) *TooGoodToGo {
 	t := &TooGoodToGo{
 		email:       email,
 		dataDir:     dataDir,
 		client:      &http.Client{Timeout: 30 * time.Second},
-		userAgent:   "TGTG/25.1.1 Dalvik/2.1.0 (Linux; Android 12; SM-G991B)",
 		seen:        make(map[string]bool),
 		baseURL:     "https://apptoogoodtogo.com/api",
 		datadomeURL: "https://api-sdk.datadome.co/sdk/",
+		readPin:     readPinFromStdin,
 	}
 	t.loadTokens()
 	return t
+}
+
+func readPinFromStdin() (string, error) {
+	fmt.Print("Enter PIN from email: ")
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		return strings.TrimSpace(scanner.Text()), nil
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("no input")
 }
 
 func (t *TooGoodToGo) Name() string { return "toogoodtogo" }
@@ -73,14 +98,12 @@ func (t *TooGoodToGo) Describe() string {
 }
 
 func (t *TooGoodToGo) Check(ctx context.Context) ([]Alert, error) {
-	// Step 1: authenticate if needed
 	if t.accessToken == "" {
 		if err := t.authenticate(ctx); err != nil {
 			return nil, fmt.Errorf("tgtg auth: %w", err)
 		}
 	}
 
-	// Step 2: refresh tokens if older than 4 hours
 	if time.Since(t.lastRefresh) > 4*time.Hour {
 		if err := t.refreshTokens(ctx); err != nil {
 			slog.Warn("tgtg token refresh failed, will re-auth next cycle", "error", err)
@@ -89,13 +112,11 @@ func (t *TooGoodToGo) Check(ctx context.Context) ([]Alert, error) {
 		}
 	}
 
-	// Step 3: get favorites
 	items, err := t.getFavorites(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tgtg favorites: %w", err)
 	}
 
-	// Step 4: generate alerts
 	var alerts []Alert
 	for _, item := range items {
 		if item.ItemsAvailable > 0 {
@@ -114,13 +135,9 @@ func (t *TooGoodToGo) Check(ctx context.Context) ([]Alert, error) {
 	return alerts, nil
 }
 
-// authenticate performs the email OTP auth flow.
+// authenticate performs the email + PIN auth flow.
 func (t *TooGoodToGo) authenticate(ctx context.Context) error {
-	if err := t.fetchDataDomeCookie(ctx); err != nil {
-		return fmt.Errorf("datadome: %w", err)
-	}
-
-	// Step 1: request email OTP
+	// Step 1: request email
 	body := map[string]any{
 		"device_type": "ANDROID",
 		"email":       t.email,
@@ -132,7 +149,8 @@ func (t *TooGoodToGo) authenticate(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("authByEmail: status %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("authByEmail: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var authResp struct {
@@ -142,55 +160,54 @@ func (t *TooGoodToGo) authenticate(ctx context.Context) error {
 		return fmt.Errorf("authByEmail decode: %w", err)
 	}
 
-	slog.Info("tgtg: check your email and click the TGTG login link", "email", t.email)
+	slog.Info("tgtg: check your email for a login PIN code", "email", t.email)
 
-	// Step 2: poll for completion
-	pollBody := map[string]any{
-		"device_type": "ANDROID",
-		"email":       t.email,
+	// Step 2: read PIN from user
+	pin, err := t.readPin()
+	if err != nil {
+		return fmt.Errorf("reading PIN: %w", err)
+	}
+	if pin == "" {
+		return fmt.Errorf("empty PIN")
+	}
+
+	// Step 3: submit PIN
+	pinBody := map[string]any{
+		"device_type":        "ANDROID",
+		"email":              t.email,
+		"request_pin":        pin,
 		"request_polling_id": authResp.PollingID,
 	}
+	resp2, err := t.apiPost(ctx, "/auth/v5/authByRequestPin", pinBody)
+	if err != nil {
+		return fmt.Errorf("authByPin: %w", err)
+	}
+	defer resp2.Body.Close()
 
-	for i := 0; i < 24; i++ {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-
-		resp, err := t.apiPost(ctx, "/auth/v5/authByRequestPollingId", pollBody)
-		if err != nil {
-			continue
-		}
-
-		data, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK {
-			var tokenResp struct {
-				AccessToken  string `json:"access_token"`
-				RefreshToken string `json:"refresh_token"`
-				StartupData  struct {
-					User struct {
-						UserID string `json:"user_id"`
-					} `json:"user"`
-				} `json:"startup_data"`
-			}
-			if err := json.Unmarshal(data, &tokenResp); err != nil {
-				return fmt.Errorf("poll decode: %w", err)
-			}
-			t.accessToken = tokenResp.AccessToken
-			t.refreshToken = tokenResp.RefreshToken
-			t.userID = tokenResp.StartupData.User.UserID
-			t.lastRefresh = time.Now()
-			t.saveTokens()
-			slog.Info("tgtg: authenticated successfully")
-			return nil
-		}
-		// 202 = still pending, keep polling
+	data, _ := io.ReadAll(resp2.Body)
+	if resp2.StatusCode != http.StatusOK {
+		return fmt.Errorf("authByPin: status %d: %s", resp2.StatusCode, string(data))
 	}
 
-	return fmt.Errorf("auth polling timed out after 24 attempts")
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		StartupData  struct {
+			User struct {
+				UserID string `json:"user_id"`
+			} `json:"user"`
+		} `json:"startup_data"`
+	}
+	if err := json.Unmarshal(data, &tokenResp); err != nil {
+		return fmt.Errorf("authByPin decode: %w", err)
+	}
+	t.accessToken = tokenResp.AccessToken
+	t.refreshToken = tokenResp.RefreshToken
+	t.userID = tokenResp.StartupData.User.UserID
+	t.lastRefresh = time.Now()
+	t.saveTokens()
+	slog.Info("tgtg: authenticated successfully")
+	return nil
 }
 
 // refreshTokens refreshes the access token.
@@ -230,10 +247,10 @@ func (t *TooGoodToGo) refreshTokens(ctx context.Context) error {
 
 // getFavorites fetches the user's favorite items.
 func (t *TooGoodToGo) getFavorites(ctx context.Context) ([]tgtgItem, error) {
-	return t.getFavoritesWithRetry(ctx, true, true)
+	return t.getFavoritesWithRetry(ctx, true)
 }
 
-func (t *TooGoodToGo) getFavoritesWithRetry(ctx context.Context, retry401, retry403 bool) ([]tgtgItem, error) {
+func (t *TooGoodToGo) getFavoritesWithRetry(ctx context.Context, canRetry bool) ([]tgtgItem, error) {
 	body := map[string]any{
 		"user_id":        t.userID,
 		"favorites_only": true,
@@ -246,20 +263,22 @@ func (t *TooGoodToGo) getFavoritesWithRetry(ctx context.Context, retry401, retry
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized && retry401 {
+	if resp.StatusCode == http.StatusUnauthorized && canRetry {
 		resp.Body.Close()
 		if err := t.refreshTokens(ctx); err != nil {
 			return nil, fmt.Errorf("refresh after 401: %w", err)
 		}
-		return t.getFavoritesWithRetry(ctx, false, retry403)
+		return t.getFavoritesWithRetry(ctx, false)
 	}
 
-	if resp.StatusCode == http.StatusForbidden && retry403 {
+	if resp.StatusCode == http.StatusForbidden && canRetry {
 		resp.Body.Close()
-		if err := t.fetchDataDomeCookie(ctx); err != nil {
-			return nil, fmt.Errorf("datadome refresh after 403: %w", err)
+		// 403 = DataDome challenge, refresh cookie and retry
+		t.cookie = ""
+		if err := t.fetchDataDomeCookie(ctx, t.baseURL+"/item/v8/"); err != nil {
+			slog.Warn("tgtg: datadome refresh failed", "error", err)
 		}
-		return t.getFavoritesWithRetry(ctx, retry401, false)
+		return t.getFavoritesWithRetry(ctx, false)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -294,23 +313,37 @@ func (t *TooGoodToGo) getFavoritesWithRetry(ctx context.Context, retry401, retry
 	return items, nil
 }
 
-// fetchDataDomeCookie obtains a DataDome cookie for bot protection bypass.
-func (t *TooGoodToGo) fetchDataDomeCookie(ctx context.Context) error {
-	form := url.Values{
-		"ddk":      {"A2B3C4D5E6"},
-		"ddv":      {"4.10.2"},
-		"ddsrc":    {"sdk"},
-		"responsePage": {"origin"},
-		"ddtype":   {"l"},
+// fetchDataDomeCookie obtains a datadome cookie from the DataDome SDK endpoint.
+func (t *TooGoodToGo) fetchDataDomeCookie(ctx context.Context, requestURL string) error {
+	cid := generateDatadomeCID()
+	params := url.Values{
+		"camera":   {`{"auth":"true", "info":"{\"front\":\"2000x1500\",\"back\":\"5472x3648\"}"}`},
+		"cid":      {cid},
+		"ddk":      {tgtgDDK},
+		"ddv":      {"3.0.4"},
+		"ddvc":     {tgtgAPKVersion},
+		"events":   {fmt.Sprintf(`[{"id":1,"message":"response validation","source":"sdk","date":%d}]`, time.Now().UnixMilli())},
+		"inte":     {"android-java-okhttp"},
+		"mdl":      {"Pixel 7 Pro"},
+		"os":       {"Android"},
+		"osn":      {"UPSIDE_DOWN_CAKE"},
+		"osr":      {"14"},
+		"osv":      {"34"},
+		"request":  {requestURL},
+		"screen_d": {"3.5"},
+		"screen_x": {"1440"},
+		"screen_y": {"3120"},
+		"ua":       {tgtgUserAgent},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", t.datadomeURL,
-		strings.NewReader(form.Encode()))
+		strings.NewReader(params.Encode()))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", t.userAgent)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", tgtgUserAgent)
 
 	resp, err := t.client.Do(req)
 	if err != nil {
@@ -319,29 +352,70 @@ func (t *TooGoodToGo) fetchDataDomeCookie(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	var ddResp struct {
+		Status int    `json:"status"`
 		Cookie string `json:"cookie"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&ddResp); err != nil {
 		return fmt.Errorf("datadome decode: %w", err)
 	}
-	t.cookie = ddResp.Cookie
+	if ddResp.Status == 200 && ddResp.Cookie != "" {
+		if m := datadomeCookieRe.FindStringSubmatch(ddResp.Cookie); len(m) > 1 {
+			t.cookie = m[1]
+		}
+	}
 	return nil
 }
 
-// apiPost makes an authenticated POST request to the TGTG API.
+func generateDatadomeCID() string {
+	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789~_"
+	b := make([]byte, 120)
+	for i := range b {
+		b[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(b)
+}
+
+// apiPost makes a POST request to the TGTG API with DataDome cookie handling.
 func (t *TooGoodToGo) apiPost(ctx context.Context, path string, body any) (*http.Response, error) {
+	fullURL := t.baseURL + path
+
+	// Ensure datadome cookie before request
+	if t.cookie == "" {
+		_ = t.fetchDataDomeCookie(ctx, fullURL)
+	}
+
+	resp, err := t.doPost(ctx, fullURL, body)
+	if err != nil {
+		return nil, err
+	}
+
+	// On 403, refresh datadome cookie and retry once
+	if resp.StatusCode == http.StatusForbidden {
+		resp.Body.Close()
+		t.cookie = ""
+		if err := t.fetchDataDomeCookie(ctx, fullURL); err != nil {
+			return nil, fmt.Errorf("datadome refresh: %w", err)
+		}
+		return t.doPost(ctx, fullURL, body)
+	}
+
+	return resp, nil
+}
+
+func (t *TooGoodToGo) doPost(ctx context.Context, url string, body any) (*http.Response, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", t.baseURL+path,
-		strings.NewReader(string(data)))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(data)))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", t.userAgent)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", "en-GB")
+	req.Header.Set("User-Agent", tgtgUserAgent)
 	if t.accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+t.accessToken)
 	}
@@ -357,7 +431,7 @@ func (t *TooGoodToGo) loadTokens() {
 	path := filepath.Join(t.dataDir, "tgtg_tokens.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return // no saved tokens, that's fine
+		return
 	}
 	var tokens tgtgTokens
 	if err := json.Unmarshal(data, &tokens); err != nil {

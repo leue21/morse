@@ -37,7 +37,6 @@ plugins:
   toogoodtogo:
     interval: "5m"
     email: "user@example.com"
-    store_ids: ["abc123"]
 ```
 
 ### Getting Telegram Credentials
@@ -60,7 +59,21 @@ Monitors Bitcoin price via the CoinGecko free API. Alerts when the price crosses
 
 ### toogoodtogo
 
-Skeleton plugin for TooGoodToGo surprise bag monitoring. The TGTG API requires a complex email-based OTP auth flow that is not yet implemented — the structure is in place for future development.
+Monitors your TooGoodToGo favorites for available surprise bags. Uses the TGTG API with email-based OTP authentication.
+
+**First run:** salert will request a login link via email. Click the link in the TGTG email to authenticate. Tokens are saved to `tgtg_tokens.json` next to the config file so subsequent restarts don't require re-authentication.
+
+**How it works:**
+- Fetches your favorited stores from the TGTG app
+- Alerts when any store has bags available (`items_available > 0`)
+- Re-alerts when a store restocks after selling out
+- Automatically refreshes auth tokens every 4 hours
+- Handles DataDome bot protection
+
+| Config Key | Type | Description |
+|---|---|---|
+| `interval` | duration | Poll frequency (default: `5m`) |
+| `email` | string | Your TooGoodToGo account email |
 
 ## Writing a New Plugin
 
@@ -188,7 +201,7 @@ journalctl -u salert --since "1 hour ago"
 ├── plugin/
 │   ├── plugin.go        # Plugin interface + Alert struct
 │   ├── btcprice.go      # BTC price monitoring
-│   └── toogoodtogo.go   # TooGoodToGo (skeleton)
+│   └── toogoodtogo.go   # TooGoodToGo favorites monitoring
 └── scheduler/
     └── scheduler.go     # Per-plugin goroutine scheduler
 ```

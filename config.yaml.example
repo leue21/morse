@@ -1,10 +1,10 @@
 telegram:
-  bot_token: "123456:ABC-DEF..."
-  chat_id: 12345678
+  bot_token: "YOUR_BOT_TOKEN"
+  chat_id: 0
 
 plugins:
   toogoodtogo:
-    email: "user@example.com"
+    email: "your@email.com"
     interval: "5m"
 
   btcprice:
