@@ -59,7 +59,6 @@ func newTestTGTG(t *testing.T, baseURL string) *TooGoodToGo {
 		seen:         make(map[string]bool),
 		baseURL:      baseURL,
 		datadomeURL:  baseURL + "/datadome",
-		readPin:      func() (string, error) { return "1234", nil },
 	}
 }
 
@@ -270,5 +269,104 @@ func TestTGTGDescribe(t *testing.T) {
 	}
 	if !strings.Contains(desc, "Mode: favorites") {
 		t.Errorf("Describe() missing mode, got:\n%s", desc)
+	}
+}
+
+func TestNeedsLogin(t *testing.T) {
+	p := &TooGoodToGo{seen: make(map[string]bool)}
+	if !p.NeedsLogin() {
+		t.Error("NeedsLogin() = false, want true when no access token")
+	}
+	p.accessToken = "tok"
+	if p.NeedsLogin() {
+		t.Error("NeedsLogin() = true, want false when access token is set")
+	}
+}
+
+func TestCheckReturnsErrNeedsLogin(t *testing.T) {
+	p := &TooGoodToGo{seen: make(map[string]bool)}
+	_, err := p.Check(context.Background())
+	if err != ErrNeedsLogin {
+		t.Errorf("Check() error = %v, want ErrNeedsLogin", err)
+	}
+}
+
+func TestStartLogin(t *testing.T) {
+	srv := testutil.NewFakeAPI(t).
+		Handle("POST", "/auth/v5/authByEmail", 200, `{"polling_id":"poll123"}`).
+		Handle("POST", "/datadome", 200, `{"status":200,"cookie":"datadome=dd1; Path=/; Secure"}`).
+		Start()
+
+	p := &TooGoodToGo{
+		email:       "test@example.com",
+		dataDir:     t.TempDir(),
+		client:      &http.Client{Timeout: 5 * time.Second},
+		seen:        make(map[string]bool),
+		baseURL:     srv.URL(),
+		datadomeURL: srv.URL() + "/datadome",
+	}
+
+	if err := p.StartLogin(context.Background()); err != nil {
+		t.Fatalf("StartLogin() error: %v", err)
+	}
+	if p.pollingID != "poll123" {
+		t.Errorf("pollingID = %q, want poll123", p.pollingID)
+	}
+}
+
+func TestSubmitPIN(t *testing.T) {
+	srv := testutil.NewFakeAPI(t).
+		Handle("POST", "/auth/v5/authByRequestPin", 200,
+			`{"access_token":"at1","refresh_token":"rt1","startup_data":{"user":{"user_id":"uid1"}}}`).
+		Handle("POST", "/datadome", 200, `{"status":200,"cookie":"datadome=dd1; Path=/; Secure"}`).
+		Start()
+
+	p := &TooGoodToGo{
+		email:       "test@example.com",
+		dataDir:     t.TempDir(),
+		client:      &http.Client{Timeout: 5 * time.Second},
+		seen:        make(map[string]bool),
+		baseURL:     srv.URL(),
+		datadomeURL: srv.URL() + "/datadome",
+		pollingID:   "poll123",
+	}
+
+	if err := p.SubmitPIN(context.Background(), "664047"); err != nil {
+		t.Fatalf("SubmitPIN() error: %v", err)
+	}
+	if p.accessToken != "at1" {
+		t.Errorf("accessToken = %q, want at1", p.accessToken)
+	}
+	if p.refreshToken != "rt1" {
+		t.Errorf("refreshToken = %q, want rt1", p.refreshToken)
+	}
+	if p.userID != "uid1" {
+		t.Errorf("userID = %q, want uid1", p.userID)
+	}
+	if p.pollingID != "" {
+		t.Errorf("pollingID = %q, want empty after successful PIN", p.pollingID)
+	}
+	if p.NeedsLogin() {
+		t.Error("NeedsLogin() = true after successful SubmitPIN")
+	}
+
+	// Verify tokens were saved to disk
+	data, err := os.ReadFile(filepath.Join(p.dataDir, "tgtg_tokens.json"))
+	if err != nil {
+		t.Fatalf("token file not saved: %v", err)
+	}
+	if !strings.Contains(string(data), "at1") {
+		t.Errorf("saved tokens missing access token")
+	}
+}
+
+func TestSubmitPINWithoutLogin(t *testing.T) {
+	p := &TooGoodToGo{seen: make(map[string]bool)}
+	err := p.SubmitPIN(context.Background(), "123456")
+	if err == nil {
+		t.Fatal("SubmitPIN() without StartLogin should fail")
+	}
+	if !strings.Contains(err.Error(), "no login in progress") {
+		t.Errorf("error = %q, want 'no login in progress'", err.Error())
 	}
 }

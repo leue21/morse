@@ -42,40 +42,84 @@ func main() {
 
 	absConfig, _ := filepath.Abs(*configPath)
 	dataDir := filepath.Dir(absConfig)
-	buildPlugins(cfg, sched, dataDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	handler := buildCommandHandler(sched)
+	plugins := buildPlugins(cfg, sched, dataDir)
+	handler := buildCommandHandler(sched, plugins)
 	go tg.PollCommands(ctx, handler)
+
+	// Notify on Telegram if any plugin needs login.
+	for _, p := range plugins {
+		if ls, ok := p.(plugin.LoginStarter); ok && ls.NeedsLogin() {
+			slog.Info("plugin needs login", "plugin", p.Name())
+			tg.Send(p.Name(), "Not authenticated. Send /login to start.")
+		}
+	}
 
 	slog.Info("salert starting")
 	sched.Run(ctx)
 	slog.Info("salert stopped")
 }
 
-func buildCommandHandler(sched *scheduler.Scheduler) notifier.CommandHandler {
+func buildCommandHandler(sched *scheduler.Scheduler, plugins []plugin.Plugin) notifier.CommandHandler {
+	// Find the first LoginStarter plugin (currently only TGTG).
+	var loginPlugin plugin.LoginStarter
+	for _, p := range plugins {
+		if ls, ok := p.(plugin.LoginStarter); ok {
+			loginPlugin = ls
+			break
+		}
+	}
+
 	return func(command string) string {
-		if command != "/alert" {
+		switch {
+		case command == "/alert":
+			entries := sched.Entries()
+			if len(entries) == 0 {
+				return "No alerts configured."
+			}
+			var sb strings.Builder
+			sb.WriteString("Configured alerts:\n\n")
+			for _, e := range entries {
+				sb.WriteString(fmt.Sprintf("%s (every %s)\n", e.Plugin.Name(), e.Interval))
+				sb.WriteString(e.Plugin.Describe())
+				sb.WriteString("\n")
+			}
+			return sb.String()
+
+		case command == "/login":
+			if loginPlugin == nil {
+				return "No plugin requires login."
+			}
+			if err := loginPlugin.StartLogin(context.Background()); err != nil {
+				return fmt.Sprintf("Login failed: %v", err)
+			}
+			return "Login email sent! Please check your inbox for a login code and reply here with: /pin <YOUR_CODE>\n\nNote: If you click the link in the email, make sure to do it on a device that DOES NOT have the TooGoodToGo app installed."
+
+		case strings.HasPrefix(command, "/pin "):
+			if loginPlugin == nil {
+				return "No plugin requires login."
+			}
+			pin := strings.TrimSpace(strings.TrimPrefix(command, "/pin "))
+			if pin == "" {
+				return "Usage: /pin <code>"
+			}
+			if err := loginPlugin.SubmitPIN(context.Background(), pin); err != nil {
+				return fmt.Sprintf("PIN failed: %v", err)
+			}
+			return "Authenticated successfully!"
+
+		default:
 			return ""
 		}
-		entries := sched.Entries()
-		if len(entries) == 0 {
-			return "No alerts configured."
-		}
-		var sb strings.Builder
-		sb.WriteString("Configured alerts:\n\n")
-		for _, e := range entries {
-			sb.WriteString(fmt.Sprintf("%s (every %s)\n", e.Plugin.Name(), e.Interval))
-			sb.WriteString(e.Plugin.Describe())
-			sb.WriteString("\n")
-		}
-		return sb.String()
 	}
 }
 
-func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler, dataDir string) {
+func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler, dataDir string) []plugin.Plugin {
+	var plugins []plugin.Plugin
+
 	if pc, ok := cfg.Plugins["btcprice"]; ok {
 		p := plugin.NewBTCPrice(
 			pc.GetFloat("above_usd"),
@@ -84,6 +128,7 @@ func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler, dataDir string
 			pc.GetDuration("cooldown"),
 		)
 		sched.Add(p, pc.ParseInterval())
+		plugins = append(plugins, p)
 	}
 
 	if pc, ok := cfg.Plugins["toogoodtogo"]; ok {
@@ -92,5 +137,8 @@ func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler, dataDir string
 			dataDir,
 		)
 		sched.Add(p, pc.ParseInterval())
+		plugins = append(plugins, p)
 	}
+
+	return plugins
 }

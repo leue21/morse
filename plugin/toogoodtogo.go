@@ -1,7 +1,6 @@
 package plugin
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,6 +28,7 @@ type TooGoodToGo struct {
 	userID       string
 	cookie       string // datadome cookie value
 	lastRefresh  time.Time
+	pollingID    string // set by StartLogin, consumed by SubmitPIN
 
 	// dedup — entry removed when stock drops to 0 so restock re-alerts
 	seen map[string]bool
@@ -36,10 +36,6 @@ type TooGoodToGo struct {
 	// testing hooks
 	baseURL     string // default "https://apptoogoodtogo.com/api"
 	datadomeURL string // default "https://api-sdk.datadome.co/sdk/"
-
-	// readPin is a hook for reading the PIN from the user.
-	// In production this reads from stdin; tests can override it.
-	readPin func() (string, error)
 }
 
 type tgtgItem struct {
@@ -58,7 +54,7 @@ type tgtgTokens struct {
 }
 
 const (
-	tgtgAPKVersion = "24.11.0"
+	tgtgAPKVersion = "26.2.1"
 	tgtgUserAgent  = "TGTG/" + tgtgAPKVersion + " Dalvik/2.1.0 (Linux; U; Android 14; Pixel 7 Pro Build/UPSIDE_DOWN_CAKE)"
 	tgtgDDK        = "1D42C2CA6131C526E09F294FE96F94"
 )
@@ -73,22 +69,9 @@ func NewTooGoodToGo(email, dataDir string) *TooGoodToGo {
 		seen:        make(map[string]bool),
 		baseURL:     "https://apptoogoodtogo.com/api",
 		datadomeURL: "https://api-sdk.datadome.co/sdk/",
-		readPin:     readPinFromStdin,
 	}
 	t.loadTokens()
 	return t
-}
-
-func readPinFromStdin() (string, error) {
-	fmt.Print("Enter PIN from email: ")
-	scanner := bufio.NewScanner(os.Stdin)
-	if scanner.Scan() {
-		return strings.TrimSpace(scanner.Text()), nil
-	}
-	if err := scanner.Err(); err != nil {
-		return "", err
-	}
-	return "", fmt.Errorf("no input")
 }
 
 func (t *TooGoodToGo) Name() string { return "toogoodtogo" }
@@ -99,9 +82,7 @@ func (t *TooGoodToGo) Describe() string {
 
 func (t *TooGoodToGo) Check(ctx context.Context) ([]Alert, error) {
 	if t.accessToken == "" {
-		if err := t.authenticate(ctx); err != nil {
-			return nil, fmt.Errorf("tgtg auth: %w", err)
-		}
+		return nil, ErrNeedsLogin
 	}
 
 	if time.Since(t.lastRefresh) > 4*time.Hour {
@@ -135,9 +116,14 @@ func (t *TooGoodToGo) Check(ctx context.Context) ([]Alert, error) {
 	return alerts, nil
 }
 
-// authenticate performs the email + PIN auth flow.
-func (t *TooGoodToGo) authenticate(ctx context.Context) error {
-	// Step 1: request email
+// NeedsLogin reports whether the plugin requires interactive login.
+func (t *TooGoodToGo) NeedsLogin() bool {
+	return t.accessToken == ""
+}
+
+// StartLogin initiates the email auth flow and stores the polling ID.
+// The caller should then prompt the user for the PIN and call SubmitPIN.
+func (t *TooGoodToGo) StartLogin(ctx context.Context) error {
 	body := map[string]any{
 		"device_type": "ANDROID",
 		"email":       t.email,
@@ -160,33 +146,39 @@ func (t *TooGoodToGo) authenticate(ctx context.Context) error {
 		return fmt.Errorf("authByEmail decode: %w", err)
 	}
 
-	slog.Info("tgtg: check your email for a login PIN code", "email", t.email)
+	t.pollingID = authResp.PollingID
+	slog.Info("tgtg: login started, waiting for PIN", "email", t.email, "polling_id", t.pollingID)
+	return nil
+}
 
-	// Step 2: read PIN from user
-	pin, err := t.readPin()
-	if err != nil {
-		return fmt.Errorf("reading PIN: %w", err)
+// SubmitPIN completes the auth flow with the PIN from the user.
+func (t *TooGoodToGo) SubmitPIN(ctx context.Context, pin string) error {
+	if t.pollingID == "" {
+		return fmt.Errorf("no login in progress, send /login first")
 	}
 	if pin == "" {
 		return fmt.Errorf("empty PIN")
 	}
 
-	// Step 3: submit PIN
+	slog.Info("tgtg: submitting PIN", "polling_id", t.pollingID)
+
 	pinBody := map[string]any{
 		"device_type":        "ANDROID",
 		"email":              t.email,
 		"request_pin":        pin,
-		"request_polling_id": authResp.PollingID,
+		"request_polling_id": t.pollingID,
 	}
-	resp2, err := t.apiPost(ctx, "/auth/v5/authByRequestPin", pinBody)
+	resp, err := t.apiPost(ctx, "/auth/v5/authByRequestPin", pinBody)
 	if err != nil {
+		t.pollingID = ""
 		return fmt.Errorf("authByPin: %w", err)
 	}
-	defer resp2.Body.Close()
+	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp2.Body)
-	if resp2.StatusCode != http.StatusOK {
-		return fmt.Errorf("authByPin: status %d: %s", resp2.StatusCode, string(data))
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.pollingID = ""
+		return fmt.Errorf("authByPin: status %d: %s", resp.StatusCode, string(data))
 	}
 
 	var tokenResp struct {
@@ -199,12 +191,14 @@ func (t *TooGoodToGo) authenticate(ctx context.Context) error {
 		} `json:"startup_data"`
 	}
 	if err := json.Unmarshal(data, &tokenResp); err != nil {
+		t.pollingID = ""
 		return fmt.Errorf("authByPin decode: %w", err)
 	}
 	t.accessToken = tokenResp.AccessToken
 	t.refreshToken = tokenResp.RefreshToken
 	t.userID = tokenResp.StartupData.User.UserID
 	t.lastRefresh = time.Now()
+	t.pollingID = ""
 	t.saveTokens()
 	slog.Info("tgtg: authenticated successfully")
 	return nil
@@ -416,6 +410,7 @@ func (t *TooGoodToGo) doPost(ctx context.Context, url string, body any) (*http.R
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "en-GB")
 	req.Header.Set("User-Agent", tgtgUserAgent)
+	req.Header.Set("X-App-Version", tgtgAPKVersion)
 	if t.accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+t.accessToken)
 	}
