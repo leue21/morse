@@ -2,11 +2,10 @@
 PREFIX    ?= $(HOME)/.local
 BINDIR    ?= $(PREFIX)/bin
 BINARY    ?= morse
-SERVICE   ?= morse.service
 GO        ?= /usr/local/go/bin/go
 CONFIGDIR ?= $(HOME)/.config/morse
 
-.PHONY: all build test vet clean install uninstall enable disable restart status logs
+.PHONY: all build test vet clean install install-diskguard uninstall
 
 all: build
 
@@ -35,34 +34,29 @@ install: build
 		echo "Config already exists at $(CONFIGDIR)/config.yaml — not overwriting"; \
 	fi
 	install -d $(HOME)/.config/systemd/user
-	install -m 644 $(SERVICE) $(HOME)/.config/systemd/user/$(SERVICE)
+	install -m 644 notify@.service $(HOME)/.config/systemd/user/notify@.service
 	systemctl --user daemon-reload
 	@echo ""
-	@echo "Installed. Next steps:"
-	@echo "  1. Edit $(CONFIGDIR)/config.yaml with your Telegram bot_token and chat_id"
-	@echo "  2. make enable"
+	@echo "Installed. morse is a CLI; there is no service to start."
+	@echo "  morse capabilities    # check it is configured"
+	@echo "  make install-diskguard   # optional: the disk-space job"
+
+# diskguard is a consumer of morse, installed separately because it is not part
+# of it.
+install-diskguard:
+	install -m 755 contrib/diskguard/diskguard $(DESTDIR)$(BINDIR)/diskguard
+	install -d $(HOME)/.config/systemd/user
+	install -m 644 contrib/diskguard/diskguard.service $(HOME)/.config/systemd/user/diskguard.service
+	install -m 644 contrib/diskguard/diskguard.timer $(HOME)/.config/systemd/user/diskguard.timer
+	systemctl --user daemon-reload
+	systemctl --user enable --now diskguard.timer
+	@echo "diskguard installed; runs every 15 minutes"
 
 uninstall:
-	systemctl --user stop $(BINARY) 2>/dev/null || true
-	systemctl --user disable $(BINARY) 2>/dev/null || true
-	sudo rm -f $(DESTDIR)$(BINDIR)/$(BINARY)
-	rm -f $(HOME)/.config/systemd/user/$(SERVICE)
+	systemctl --user disable --now diskguard.timer 2>/dev/null || true
+	rm -f $(DESTDIR)$(BINDIR)/$(BINARY) $(DESTDIR)$(BINDIR)/diskguard
+	rm -f $(HOME)/.config/systemd/user/notify@.service
+	rm -f $(HOME)/.config/systemd/user/diskguard.service $(HOME)/.config/systemd/user/diskguard.timer
 	systemctl --user daemon-reload
 	@echo "Uninstalled. Config preserved at $(CONFIGDIR)/config.yaml"
 
-## Service management
-
-enable:
-	systemctl --user enable --now $(BINARY)
-
-disable:
-	systemctl --user disable --now $(BINARY)
-
-restart:
-	systemctl --user restart $(BINARY)
-
-status:
-	systemctl --user status $(BINARY)
-
-logs:
-	journalctl --user -u $(BINARY) -f

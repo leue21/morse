@@ -21,10 +21,10 @@ func TestResolveMessage(t *testing.T) {
 		stdin:     "panic: nil map\nexit status 2\n",
 		wantTitle: "Unit failed: dewey.service", wantBody: "panic: nil map\nexit status 2",
 	}, {
-		// The failure most worth hearing about is a unit that dies silently, so
-		// an empty journal must not suppress the alert.
-		name: "silent unit still reports", args: []string{"Unit failed: dewey.service"},
-		wantTitle: "Unit failed: dewey.service", wantBody: "(no journal output)",
+		// A caller with nothing to add still has something to report: a unit
+		// that died without logging is exactly the case worth hearing about.
+		name: "title alone still reports", args: []string{"Unit failed: dewey.service"},
+		wantTitle: "Unit failed: dewey.service", wantBody: "(no details)",
 	}, {
 		name: "nothing at all", wantErrStr: "nothing to send",
 	}}

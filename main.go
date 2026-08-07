@@ -1,124 +1,95 @@
+// Command morse sends a notification to Telegram.
+//
+// It is a CLI and nothing else: no daemon, no schedule, no watching. Anything
+// that wants to be told something — a systemd OnFailure handler, a cron job, an
+// agent, a person at a prompt — decides for itself when to speak and calls
+// morse to do the speaking.
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"morse/config"
 	"morse/notifier"
-	"morse/plugin"
-	"morse/scheduler"
 )
 
 func main() {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		slog.Error("failed to get home directory", "error", err)
-		os.Exit(1)
+		fail(err)
 	}
 	defaultConfig := filepath.Join(home, ".config", "morse", "config.yaml")
 
-	// Subcommands run and exit; with none, morse starts the daemon.
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		// `morse send <title> [body]` posts a single message. systemd
-		// OnFailure handlers need to report a unit that died, which the
-		// scheduled plugins cannot do: by then this process may be the thing
-		// that died.
-		case "send":
-			if err := cmdSend(defaultConfig, os.Args[2:]); err != nil {
-				slog.Error("send failed", "error", err)
-				os.Exit(1)
-			}
-			return
-		case "capabilities":
-			if err := cmdCapabilities(defaultConfig, os.Args[2:], os.Stdout); err != nil {
-				slog.Error("capabilities failed", "error", err)
-				os.Exit(1)
-			}
-			return
-		}
+	args := os.Args[1:]
+	if len(args) == 0 {
+		usage(os.Stderr)
+		os.Exit(2)
 	}
 
-	configPath := flag.String("config", defaultConfig, "path to config file")
-	flag.Parse()
+	switch args[0] {
+	case "send":
+		if err := cmdSend(defaultConfig, args[1:]); err != nil {
+			fail(err)
+		}
+	case "capabilities":
+		if err := cmdCapabilities(defaultConfig, args[1:], os.Stdout); err != nil {
+			fail(err)
+		}
+	case "help", "-h", "--help":
+		usage(os.Stdout)
+	default:
+		fmt.Fprintf(os.Stderr, "morse: unknown command %q\n\n", args[0])
+		usage(os.Stderr)
+		os.Exit(2)
+	}
+}
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, "morse:", err)
+	os.Exit(1)
+}
 
+func usage(out io.Writer) {
+	fmt.Fprint(out, `morse — send a notification to Telegram
+
+usage:
+  morse send [--silent] <title> [body]   send a message; body may come from stdin
+  morse capabilities [--json]            what morse accepts, for a caller
+  morse help
+
+Credentials come from ~/.config/morse/config.yaml, or from the environment:
+  MORSE_BOT_TOKEN, MORSE_CHAT_ID
+`)
+}
+
+// cmdSend parses the send flags and posts one message.
+func cmdSend(defaultConfig string, args []string) error {
+	fs := flag.NewFlagSet("send", flag.ExitOnError)
+	configPath := fs.String("config", defaultConfig, "path to config file")
+	silent := fs.Bool("silent", false, "deliver without a notification sound")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	title, body, err := resolveMessage(fs.Args(), os.Stdin)
+	if err != nil {
+		return err
+	}
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
+		return err
 	}
-
-	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
-	sched := scheduler.New(tg)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	plugins := buildPlugins(cfg, sched)
-	handler := buildCommandHandler(sched, plugins)
-	go tg.PollCommands(ctx, handler)
-
-	slog.Info("morse starting")
-	sched.Run(ctx)
-	slog.Info("morse stopped")
+	return notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID).Send(title, body, *silent)
 }
 
-// buildCommandHandler answers the Telegram commands morse understands. There
-// is only one: what is being watched, and what it currently sees.
-func buildCommandHandler(sched *scheduler.Scheduler, _ []plugin.Plugin) notifier.CommandHandler {
-	return func(command string) string {
-		if command != "/alert" {
-			return ""
-		}
-		entries := sched.Entries()
-		if len(entries) == 0 {
-			return "Nothing is being watched."
-		}
-		var sb strings.Builder
-		sb.WriteString("Watching:\n\n")
-		for _, e := range entries {
-			sb.WriteString(fmt.Sprintf("%s (every %s)\n", e.Plugin.Name(), e.Interval))
-			sb.WriteString(e.Plugin.Describe())
-			sb.WriteString("\n")
-		}
-		return sb.String()
-	}
-}
-
-func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler) []plugin.Plugin {
-	var plugins []plugin.Plugin
-
-	if pc, ok := cfg.Plugins["diskspace"]; ok {
-		p := plugin.NewDiskSpace(
-			pc.GetStringSlice("paths"),
-			pc.GetFloat("min_free_percent"),
-			pc.GetFloat("min_free_gb"),
-			pc.GetDuration("cooldown"),
-		)
-		sched.Add(p, pc.ParseInterval())
-		plugins = append(plugins, p)
-	}
-
-	return plugins
-}
-
-// resolveMessage works out what a `morse send` invocation should report.
-// Text after the title becomes the body; with no body arguments it is read from
-// stdin, so a caller can pipe in a journal excerpt.
+// resolveMessage works out what a send invocation should report. Text after the
+// title becomes the body; with no body arguments it is read from stdin, so a
+// caller can pipe in a log excerpt.
 func resolveMessage(args []string, stdin io.Reader) (title, body string, err error) {
 	title = "morse"
 	titled := false
@@ -137,39 +108,9 @@ func resolveMessage(args []string, stdin io.Reader) (title, body string, err err
 		if !titled {
 			return "", "", errors.New("nothing to send")
 		}
-		// A unit that dies without logging anything is still worth reporting —
-		// arguably more so. The title carries which unit failed, so an empty
-		// journal must not swallow the alert.
-		body = "(no journal output)"
+		// A caller with nothing to add still has something to report: a unit
+		// that died without logging is exactly the case worth hearing about.
+		body = "(no details)"
 	}
 	return title, body, nil
-}
-
-// cmdSend parses the flags of the send subcommand and posts one message.
-func cmdSend(defaultConfig string, args []string) error {
-	fs := flag.NewFlagSet("send", flag.ExitOnError)
-	configPath := fs.String("config", defaultConfig, "path to config file")
-	severity := fs.String("severity", string(plugin.SeverityWarning),
-		"info (arrives silently), warning, or critical")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	level, err := plugin.ParseSeverity(*severity)
-	if err != nil {
-		return err
-	}
-	return sendOnce(*configPath, fs.Args(), level)
-}
-
-// sendOnce posts one message using the configured Telegram credentials.
-func sendOnce(configPath string, args []string, severity plugin.Severity) error {
-	title, body, err := resolveMessage(args, os.Stdin)
-	if err != nil {
-		return err
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	return notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID).Send(title, body, severity)
 }

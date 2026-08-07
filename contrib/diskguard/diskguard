@@ -1,0 +1,50 @@
+#!/bin/sh
+# diskguard — warn before a filesystem fills up.
+#
+# A consumer of morse, not part of it: it decides when there is something to
+# say, and morse says it. Anything else that wants to report can be written the
+# same way without touching morse.
+#
+# On a host that records live streams this is the one failure that destroys
+# something unrecoverable — a stream written to a full disk is lost and cannot
+# be fetched again. Everything else can be recomputed.
+set -eu
+
+PATHS=${DISKGUARD_PATHS:-/}
+MIN_PERCENT=${DISKGUARD_MIN_FREE_PERCENT:-8}
+MIN_GB=${DISKGUARD_MIN_FREE_GB:-120}
+COOLDOWN_HOURS=${DISKGUARD_COOLDOWN_HOURS:-6}
+STATE_DIR=${DISKGUARD_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/diskguard}
+MORSE=${MORSE:-$HOME/.local/bin/morse}
+
+mkdir -p "$STATE_DIR"
+
+for target in $PATHS; do
+    if ! avail_kb=$(df -Pk "$target" 2>/dev/null | awk 'NR==2 {print $4}'); then
+        # An unreadable path is worth knowing about: an unmounted fileserver
+        # otherwise looks exactly like an empty one.
+        "$MORSE" send "Disk unreadable" "$target could not be checked"
+        continue
+    fi
+    capacity=$(df -Pk "$target" | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+    free_percent=$((100 - capacity))
+    free_gb=$((avail_kb / 1024 / 1024))
+
+    # Both thresholds are checked and either firing is enough: a percentage
+    # alone is useless on a large disk, an absolute floor alone on a small one.
+    if [ "$free_percent" -ge "$MIN_PERCENT" ] && [ "$free_gb" -ge "$MIN_GB" ]; then
+        continue
+    fi
+
+    # Without a cooldown a disk that stays low reports on every run, which
+    # teaches the reader to ignore it.
+    stamp="$STATE_DIR/$(printf '%s' "$target" | tr -c 'A-Za-z0-9' '_').last"
+    now=$(date +%s)
+    if [ -f "$stamp" ] && [ "$((now - $(cat "$stamp")))" -lt "$((COOLDOWN_HOURS * 3600))" ]; then
+        continue
+    fi
+    printf '%s\n' "$now" > "$stamp"
+
+    "$MORSE" send "Disk almost full" \
+        "$target has ${free_gb}GB free (${free_percent}%). Recording to a full disk loses the stream."
+done
