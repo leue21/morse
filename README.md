@@ -29,10 +29,15 @@ The repository is its own tap, so there is no second repo to add:
 
 ```sh
 brew tap leue21/morse https://github.com/leue21/morse
-brew install morse
+brew install leue21/morse/morse
 ```
 
-To follow `main` instead of the latest tag, `brew install --HEAD morse`.
+The name has to be given in full. Homebrew's own core tap has an unrelated
+`morse` — a morse code trainer — and a bare `brew install morse` installs that
+one instead. The same goes for `brew upgrade leue21/morse/morse` and
+`brew uninstall leue21/morse/morse`.
+
+To follow `main` instead of the latest tag, add `--HEAD`.
 
 Homebrew installs the binary and leaves the config alone — a package manager
 has no business writing to `~/.config`. The example lands in the formula's
@@ -45,8 +50,7 @@ chmod 600 ~/.config/morse/config.yaml
 ```
 
 Or set `MORSE_BOT_TOKEN` and `MORSE_CHAT_ID` and skip the file entirely.
-Upgrades are `brew upgrade morse`; removal is `brew uninstall morse`, which
-leaves the config in place.
+Uninstalling leaves the config in place.
 
 ## Configuration
 
