@@ -96,30 +96,9 @@ failures in five minutes counts as broken rather than unlucky.
 The handler deliberately does not depend on anything of morse's being running,
 because morse is not running: it is a binary that gets executed.
 
-## contrib/diskguard
+## Writing a consumer
 
-An example consumer, installed separately because it is not part of morse:
-
-```sh
-make install-diskguard
-```
-
-A systemd timer that warns before a filesystem fills up. On a host that records
-live streams this is the one failure that destroys something unrecoverable — a
-stream written to a full disk is lost and cannot be fetched again.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `DISKGUARD_PATHS` | `/` | Filesystems to check, space separated |
-| `DISKGUARD_MIN_FREE_PERCENT` | `8` | Warn below this share free |
-| `DISKGUARD_MIN_FREE_GB` | `120` | Warn below this many GB free |
-| `DISKGUARD_COOLDOWN_HOURS` | `6` | Minimum hours between warnings per path |
-
-Both thresholds are checked and either firing is enough: a percentage alone is
-useless on a large disk, where 5% is still 100 GB, and an absolute floor alone
-is useless on a small one. The timer runs every 15 minutes and the cooldown
-decides how often it may speak, so detection speed and alert volume are tuned
-separately.
-
-Write your own the same way — decide when there is something to say, and let
-morse say it.
+Anything that needs to watch something is a separate job that calls `morse
+send`, not code inside morse. [diskguard](https://github.com/leue21/diskguard)
+— a timer that warns before a filesystem fills up — is the reference for that
+shape: it decides when there is something to say, and morse says it.

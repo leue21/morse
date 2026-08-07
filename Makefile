@@ -5,7 +5,7 @@ BINARY    ?= morse
 GO        ?= /usr/local/go/bin/go
 CONFIGDIR ?= $(HOME)/.config/morse
 
-.PHONY: all build test vet clean install install-diskguard uninstall
+.PHONY: all build test vet clean install uninstall
 
 all: build
 
@@ -39,24 +39,10 @@ install: build
 	@echo ""
 	@echo "Installed. morse is a CLI; there is no service to start."
 	@echo "  morse capabilities    # check it is configured"
-	@echo "  make install-diskguard   # optional: the disk-space job"
-
-# diskguard is a consumer of morse, installed separately because it is not part
-# of it.
-install-diskguard:
-	install -m 755 contrib/diskguard/diskguard $(DESTDIR)$(BINDIR)/diskguard
-	install -d $(HOME)/.config/systemd/user
-	install -m 644 contrib/diskguard/diskguard.service $(HOME)/.config/systemd/user/diskguard.service
-	install -m 644 contrib/diskguard/diskguard.timer $(HOME)/.config/systemd/user/diskguard.timer
-	systemctl --user daemon-reload
-	systemctl --user enable --now diskguard.timer
-	@echo "diskguard installed; runs every 15 minutes"
 
 uninstall:
-	systemctl --user disable --now diskguard.timer 2>/dev/null || true
-	rm -f $(DESTDIR)$(BINDIR)/$(BINARY) $(DESTDIR)$(BINDIR)/diskguard
+	rm -f $(DESTDIR)$(BINDIR)/$(BINARY)
 	rm -f $(HOME)/.config/systemd/user/notify@.service
-	rm -f $(HOME)/.config/systemd/user/diskguard.service $(HOME)/.config/systemd/user/diskguard.timer
 	systemctl --user daemon-reload
 	@echo "Uninstalled. Config preserved at $(CONFIGDIR)/config.yaml"
 

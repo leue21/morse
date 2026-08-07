@@ -31,11 +31,11 @@ capabilities.go      → `morse capabilities`: the callable interface, as text o
 config/              → telegram credentials, from the file or MORSE_BOT_TOKEN / MORSE_CHAT_ID
 notifier/            → Telegram Bot API client (Send)
 internal/testutil/   → FakeAPI HTTP mock for tests
-contrib/diskguard/   → an example consumer: a systemd timer that calls `morse send`
 ```
 
 Anything that needs to watch something is a separate job that calls `morse
-send`, not code inside morse. contrib/diskguard is the reference for that shape.
+send`, not code inside morse. The diskguard repo is the reference for that
+shape.
 
 ## Conventions
 

@@ -1,7 +1,0 @@
-[Unit]
-Description=diskguard — warn before a filesystem fills up
-OnFailure=notify@%n.service
-
-[Service]
-Type=oneshot
-ExecStart=%h/.local/bin/diskguard
