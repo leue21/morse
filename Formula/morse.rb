@@ -1,6 +1,9 @@
 class Morse < Formula
-  desc "Send a notification to Telegram from the command line"
+  desc "Send a notification to Telegram from the command-line"
   homepage "https://github.com/leue21/morse"
+  # url and sha256 name the last published release, but they are not edited by
+  # hand: .github/workflows/release.yml rewrites both from the tag and copies
+  # the result to leue21/homebrew-tap, which is the formula brew installs.
   url "https://github.com/leue21/morse/archive/refs/tags/v0.2.0.tar.gz"
   sha256 "5b3589ee6d96c86c04ec2ad085bb4769e8cceaccd4d34028a9969db8ea28ca12"
   license "MIT"

@@ -1,0 +1,101 @@
+# Publishes a tagged release to the Homebrew tap.
+#
+# Formula/morse.rb in this repository is the source of truth for the formula
+# body — it is edited alongside the code it installs. Its `url` and `sha256`
+# are placeholders: this workflow rewrites them from the tag being released
+# before copying the file to leue21/homebrew-tap, which is what `brew` reads.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Re-publish a tag that was already pushed, without moving the tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: go vet ./...
+      - run: go test ./... -count=1
+
+  tap:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: leue21/homebrew-tap
+          token: ${{ secrets.TAP_PUSH_TOKEN }}
+          path: tap
+
+      - name: Build the formula for this tag
+        run: |
+          set -euo pipefail
+
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
+
+          # GitHub generates tag tarballs on demand, so the first request after
+          # a tag push can lose the race. Retry before giving up.
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL --retry 2 -o release.tar.gz "$url"; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo "::error::$url did not become available" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          sha256="$(sha256sum release.tar.gz | cut -d' ' -f1)"
+          echo "$TAG -> $sha256"
+
+          sed -E \
+            -e "s|^(  url \").*(\")$|\1${url}\2|" \
+            -e "s|^(  sha256 \").*(\")$|\1${sha256}\2|" \
+            Formula/morse.rb > tap/Formula/morse.rb
+
+          # A formula whose url or sha256 did not get substituted would install
+          # the wrong release, so fail here rather than push it.
+          grep -qF "$url" tap/Formula/morse.rb
+          grep -qF "$sha256" tap/Formula/morse.rb
+
+      - name: Push to the tap
+        working-directory: tap
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- Formula/morse.rb; then
+            echo "Tap already matches $TAG; nothing to push."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/morse.rb
+          git commit -m "morse ${TAG#v}"
+          git push
