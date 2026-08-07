@@ -8,7 +8,7 @@ Plugin-based Telegram notification service. Monitors external APIs on a schedule
 # Build
 make build
 
-# Install as system service (requires sudo)
+# Install the binary, the unit and an example config
 sudo make install
 
 # Edit config with your Telegram credentials
@@ -28,15 +28,12 @@ telegram:
   chat_id: 12345678                # your chat/group ID
 
 plugins:
-  btcprice:
-    interval: "1m"          # poll frequency
-    above_usd: 100000.0     # alert when BTC >= this
-    below_usd: 50000.0      # alert when BTC <= this
-    cooldown: "30m"          # suppress repeat alerts
-
-  toogoodtogo:
-    interval: "5m"
-    email: "user@example.com"
+  diskspace:
+    interval: "15m"
+    paths: ["/"]
+    min_free_percent: 8.0
+    min_free_gb: 120.0
+    cooldown: "6h"
 ```
 
 ### Getting Telegram Credentials
@@ -46,34 +43,46 @@ plugins:
 
 ## Included Plugins
 
-### btcprice
+### diskspace
 
-Monitors Bitcoin price via the CoinGecko free API. Alerts when the price crosses above or below configured thresholds. Supports a cooldown to prevent alert floods.
+Warns before a filesystem fills up. On a host that records live streams this is
+the only failure that destroys something unrecoverable: a stream written to a
+full disk is lost and cannot be fetched again.
 
-| Config Key | Type | Description |
-|---|---|---|
-| `interval` | duration | Poll frequency (default: `5m`) |
-| `above_usd` | float | Alert when price >= value (0 to disable) |
-| `below_usd` | float | Alert when price <= value (0 to disable) |
-| `cooldown` | duration | Min time between alerts (0 to disable) |
-
-### toogoodtogo
-
-Monitors your TooGoodToGo favorites for available surprise bags. Uses the TGTG API with email-based OTP authentication.
-
-**First run:** morse will request a login link via email. Click the link in the TGTG email to authenticate. Tokens are saved to `tgtg_tokens.json` next to the config file so subsequent restarts don't require re-authentication.
-
-**How it works:**
-- Fetches your favorited stores from the TGTG app
-- Alerts when any store has bags available (`items_available > 0`)
-- Re-alerts when a store restocks after selling out
-- Automatically refreshes auth tokens every 4 hours
-- Handles DataDome bot protection
+Both thresholds are checked and either firing is enough, because either alone is
+useless at one end of the range — 5% of a 2 TB disk is still 100 GB, and 40% of
+a 20 GB one is not enough for a long recording. A path that cannot be read
+alerts as well: an unmounted fileserver otherwise looks exactly like an empty
+one.
 
 | Config Key | Type | Description |
 |---|---|---|
 | `interval` | duration | Poll frequency (default: `5m`) |
-| `email` | string | Your TooGoodToGo account email |
+| `paths` | list | Filesystems to check; one path per mount point |
+| `min_free_percent` | float | Alert below this share free (0 to disable) |
+| `min_free_gb` | float | Alert below this many GB free (0 to disable) |
+| `cooldown` | duration | Min time between alerts per path (0 to disable) |
+
+## Reporting a failed service
+
+`morse send <title> [body]` posts a single message and exits. With no body it
+reads stdin, so a systemd `OnFailure=` handler can pipe in the failed unit's
+journal:
+
+```ini
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'journalctl --user-unit=%i -n 15 --no-pager --output=cat | %h/.local/bin/morse send "Unit failed: %i"'
+```
+
+`notify@.service` in this repository does exactly that. Point a unit at it with
+`OnFailure=notify@%n.service`. It deliberately does not depend on
+`morse.service`, so it still delivers when the daemon itself is what died.
+
+Note that a unit only reaches `failed` — and so only triggers `OnFailure` —
+once it exhausts its start limit. The default window is 10 seconds, so a
+service dying slowly restarts for ever and tells nobody; set
+`StartLimitIntervalSec` wide enough that repeated failure means broken.
 
 ## Writing a New Plugin
 
@@ -200,8 +209,7 @@ journalctl -u morse --since "1 hour ago"
 │   └── telegram.go      # Telegram Bot API client
 ├── plugin/
 │   ├── plugin.go        # Plugin interface + Alert struct
-│   ├── btcprice.go      # BTC price monitoring
-│   └── toogoodtogo.go   # TooGoodToGo favorites monitoring
+│   └── diskspace.go     # free-space monitoring
 └── scheduler/
     └── scheduler.go     # Per-plugin goroutine scheduler
 ```
