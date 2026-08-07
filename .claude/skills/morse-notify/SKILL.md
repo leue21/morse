@@ -41,9 +41,10 @@ Rules that will bite you otherwise:
 morse capabilities --json
 ```
 
-Answers even when nothing is set up, so use it to check rather than sending a
-probe message. `.delivery.configured` is `false` when credentials are missing
-and `.config_error` says why. Both commands accept `--config <path>` to read
+It answers even when nothing is set up, so use it to check rather than sending
+a probe message. `.delivery.configured` is `false` when credentials are missing
+and `.config_error` says why; `.version` names the release, which `morse
+version` also prints on its own. Both commands accept `--config <path>` to read
 credentials from somewhere other than `~/.config/morse/config.yaml`.
 
 Credentials come from that file or from `MORSE_BOT_TOKEN` / `MORSE_CHAT_ID`,

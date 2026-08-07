@@ -53,12 +53,13 @@ matters for anything running in a container or under an agent.
 ```
 morse send [--silent] [--file path] <title> [body]   send a message
 morse capabilities [--json]                          what morse accepts
+morse version
 morse help
 ```
 
-Both subcommands take `--config <path>` to read credentials from somewhere
-other than `~/.config/morse/config.yaml`. Flags come before the title; a flag
-after it would otherwise end up in the message body.
+`send` and `capabilities` take `--config <path>` to read credentials from
+somewhere other than `~/.config/morse/config.yaml`. Flags come before the
+title; a flag after it would otherwise end up in the message body.
 
 With no body argument the body is read from stdin when something is piped in,
 so a caller can pass a log excerpt that way. A title on its own still sends: a

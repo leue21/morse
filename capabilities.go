@@ -92,10 +92,23 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 	return nil
 }
 
-// buildVersion reports the revision this binary was built from. Go records it
-// automatically for a build from a git checkout, so nothing has to be stamped
-// by hand or kept in step with a release.
+// version is the release this binary claims to be, set at link time with
+//
+//	-ldflags "-X main.version=v0.1.0"
+//
+// A packaged build has no git metadata to read — a package manager compiles an
+// unpacked tarball — so without this it could only report "devel", which is no
+// answer to "which morse is installed?". A build from a checkout leaves it
+// empty and falls back to the revision below.
+var version string
+
+// buildVersion reports what this binary was built from: the stamped release if
+// there is one, otherwise the revision Go records automatically for a build from
+// a git checkout, so a development build needs nothing kept in step by hand.
 func buildVersion() string {
+	if version != "" {
+		return version
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "unknown"

@@ -71,3 +71,38 @@ func TestCapabilitiesAnswersWithoutAConfig(t *testing.T) {
 		t.Error("output omits the send contract, which does not depend on config")
 	}
 }
+
+// A packaged build has no git metadata to read, so the release is stamped in at
+// link time. Without the fallback a checkout build would claim to be nothing at
+// all; without the stamp an installed copy could not name its release.
+func TestBuildVersionPrefersTheStampedRelease(t *testing.T) {
+	t.Cleanup(func(previous string) func() {
+		return func() { version = previous }
+	}(version))
+
+	version = "v1.2.3"
+	if got := buildVersion(); got != "v1.2.3" {
+		t.Errorf("buildVersion() = %q, want the stamped release", got)
+	}
+
+	version = ""
+	if got := buildVersion(); got == "" {
+		t.Error("buildVersion() is empty without a stamp; it must fall back")
+	}
+}
+
+// The version has to reach the capabilities report too: that is where a caller
+// which is not a person looks for it.
+func TestCapabilitiesCarriesTheVersion(t *testing.T) {
+	var out bytes.Buffer
+	if err := cmdCapabilities("/nonexistent/config.yaml", []string{"--json"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var caps Capabilities
+	if err := json.Unmarshal(out.Bytes(), &caps); err != nil {
+		t.Fatal(err)
+	}
+	if caps.Version == "" {
+		t.Error("capabilities reports no version")
+	}
+}

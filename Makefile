@@ -5,12 +5,18 @@ BINARY    ?= morse
 GO        ?= /usr/local/go/bin/go
 CONFIGDIR ?= $(HOME)/.config/morse
 
+# Stamped into the binary so an installed copy can name its release. A build
+# outside a checkout — from a release tarball, as a package manager does — has
+# no tag to find, and morse falls back to Go's own build info.
+VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null)
+LDFLAGS   ?= -s -w -X main.version=$(VERSION)
+
 .PHONY: all build test vet clean install uninstall
 
 all: build
 
 build:
-	$(GO) build -o $(BINARY) .
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 test:
 	$(GO) test ./... -v -count=1

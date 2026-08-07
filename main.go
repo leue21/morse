@@ -46,6 +46,8 @@ func main() {
 		if err := cmdCapabilities(defaultConfig, args[1:], os.Stdout); err != nil {
 			fail(err)
 		}
+	case "version", "-v", "--version":
+		fmt.Println("morse", buildVersion())
 	case "help", "-h", "--help":
 		usage(os.Stdout)
 	default:
@@ -67,6 +69,7 @@ usage:
   morse send [--silent] [--file path] <title> [body]
                               send a message; body may come from stdin
   morse capabilities [--json] what morse accepts, for a caller
+  morse version
   morse help
 
 Credentials come from ~/.config/morse/config.yaml, or from the environment:
