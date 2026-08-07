@@ -23,15 +23,12 @@ telegram:
   chat_id: 999
 
 plugins:
-  btcprice:
+  diskspace:
     interval: "2m"
-    above_usd: 100000.0
-    below_usd: 20000.0
+    min_free_percent: 8.0
+    min_free_gb: 120.0
     cooldown: "15m"
-  toogoodtogo:
-    interval: "5m"
-    email: "a@b.com"
-    store_ids: ["s1", "s2"]
+    paths: ["/", "/srv"]
 `)
 	cfg, err := Load(path)
 	if err != nil {
@@ -45,33 +42,25 @@ plugins:
 		t.Errorf("chat_id = %d, want 999", cfg.Telegram.ChatID)
 	}
 
-	btc, ok := cfg.Plugins["btcprice"]
+	disk, ok := cfg.Plugins["diskspace"]
 	if !ok {
-		t.Fatal("btcprice plugin config missing")
+		t.Fatal("diskspace plugin config missing")
 	}
-	if btc.ParseInterval() != 2*time.Minute {
-		t.Errorf("interval = %v, want 2m", btc.ParseInterval())
+	if disk.ParseInterval() != 2*time.Minute {
+		t.Errorf("interval = %v, want 2m", disk.ParseInterval())
 	}
-	if btc.GetFloat("above_usd") != 100000.0 {
-		t.Errorf("above_usd = %f, want 100000", btc.GetFloat("above_usd"))
+	if disk.GetFloat("min_free_percent") != 8.0 {
+		t.Errorf("min_free_percent = %f, want 8", disk.GetFloat("min_free_percent"))
 	}
-	if btc.GetFloat("below_usd") != 20000.0 {
-		t.Errorf("below_usd = %f, want 20000", btc.GetFloat("below_usd"))
+	if disk.GetFloat("min_free_gb") != 120.0 {
+		t.Errorf("min_free_gb = %f, want 120", disk.GetFloat("min_free_gb"))
 	}
-	if btc.GetDuration("cooldown") != 15*time.Minute {
-		t.Errorf("cooldown = %v, want 15m", btc.GetDuration("cooldown"))
+	if disk.GetDuration("cooldown") != 15*time.Minute {
+		t.Errorf("cooldown = %v, want 15m", disk.GetDuration("cooldown"))
 	}
-
-	tgtg, ok := cfg.Plugins["toogoodtogo"]
-	if !ok {
-		t.Fatal("toogoodtogo plugin config missing")
-	}
-	if tgtg.GetString("email") != "a@b.com" {
-		t.Errorf("email = %q, want %q", tgtg.GetString("email"), "a@b.com")
-	}
-	ids := tgtg.GetStringSlice("store_ids")
-	if len(ids) != 2 || ids[0] != "s1" || ids[1] != "s2" {
-		t.Errorf("store_ids = %v, want [s1 s2]", ids)
+	paths := disk.GetStringSlice("paths")
+	if len(paths) != 2 || paths[0] != "/" || paths[1] != "/srv" {
+		t.Errorf("paths = %v, want [/ /srv]", paths)
 	}
 }
 

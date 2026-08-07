@@ -16,17 +16,17 @@ make install        # install binary + systemd user service + config
 
 Run a single test:
 ```bash
-/usr/local/go/bin/go test ./plugin -run TestBTCPriceName -v
+/usr/local/go/bin/go test ./plugin -run TestDiskSpaceAlertsOnEitherThreshold -v
 ```
 
 ## Architecture
 
-**morse** is a plugin-based Telegram alerting bot. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is stdlib).
+**morse** is a plugin-based Telegram alerting daemon for this host: it watches things on a schedule and reports what it finds, and `morse send` posts one-off messages for systemd OnFailure handlers. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is stdlib).
 
 ```
 main.go              → wires config, plugins, scheduler, notifier; handles signals
 config/              → YAML parsing; PluginConf provides generic accessors (GetString, GetFloat, GetDuration, etc.)
-plugin/              → Plugin interface (Name, Check, Describe) + implementations (btcprice, toogoodtogo)
+plugin/              → Plugin interface (Name, Check, Describe) + implementations (diskspace)
 scheduler/           → runs each plugin in its own goroutine on a time.Ticker, calls Check() immediately then on interval
 notifier/            → Telegram Bot API client (Send + long-poll PollCommands)
 internal/testutil/   → FakeAPI HTTP mock for tests

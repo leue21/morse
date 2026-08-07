@@ -3,13 +3,12 @@ telegram:
   chat_id: 0
 
 plugins:
-  toogoodtogo:
-    email: "your@email.com"
-    interval: "5m"
-
-  btcprice:
-    interval: "1m"
-    above_usd: 100000.0
-    below_usd: 50000.0
-    change_percent: 5.0
-    cooldown: "30m"
+  # Warns before a filesystem fills up. Both thresholds are checked and either
+  # firing is enough: a percentage alone is useless on a large disk, an absolute
+  # floor alone is useless on a small one.
+  diskspace:
+    interval: "15m"
+    paths: ["/"]
+    min_free_percent: 8.0
+    min_free_gb: 120.0
+    cooldown: "6h"
