@@ -18,9 +18,7 @@ type Request struct {
 type route struct {
 	method  string
 	path    string
-	status  int
-	body    string
-	handler http.HandlerFunc // if set, takes priority over status/body
+	handler http.HandlerFunc
 }
 
 // FakeAPI is a lightweight test HTTP server with route matching.
@@ -41,8 +39,10 @@ func NewFakeAPI(t testing.TB) *FakeAPI {
 
 // Handle registers a route that returns the given status and body.
 func (f *FakeAPI) Handle(method, path string, status int, body string) *FakeAPI {
-	f.routes = append(f.routes, route{method: method, path: path, status: status, body: body})
-	return f
+	return f.HandleFunc(method, path, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	})
 }
 
 // HandleFunc registers a route with a custom handler function.
@@ -62,12 +62,7 @@ func (f *FakeAPI) Start() *FakeAPI {
 
 		for _, rt := range f.routes {
 			if rt.method == r.Method && rt.path == r.URL.Path {
-				if rt.handler != nil {
-					rt.handler(w, r)
-					return
-				}
-				w.WriteHeader(rt.status)
-				w.Write([]byte(rt.body))
+				rt.handler(w, r)
 				return
 			}
 		}

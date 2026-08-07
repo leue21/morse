@@ -2,10 +2,13 @@ package notifier
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 )
 
@@ -30,13 +33,19 @@ func NewTelegram(botToken string, chatID int64) *Telegram {
 // chat; it just does not make the reader's phone buzz, so routine facts can be
 // reported without training them to mute the chat — which would cost the
 // messages that matter.
-func (t *Telegram) Send(title, message string, silent bool) error {
-	text := fmt.Sprintf("*%s*\n%s", escapeMarkdown(title), escapeMarkdown(message))
+func (t *Telegram) Send(ctx context.Context, title, message string, silent bool) error {
+	// HTML rather than MarkdownV2: Telegram's HTML mode reserves only <, > and
+	// &, which stdlib escapes correctly, where MarkdownV2 reserves twenty-odd
+	// characters that a hand-written escaper has to track. An excerpt full of
+	// brackets, dots and backslashes is exactly what morse carries, and one
+	// missed character makes the API reject the whole message — losing the
+	// alert entirely.
+	text := fmt.Sprintf("<b>%s</b>\n%s", html.EscapeString(title), html.EscapeString(message))
 
 	payload := map[string]any{
 		"chat_id":              t.chatID,
 		"text":                 text,
-		"parse_mode":           "MarkdownV2",
+		"parse_mode":           "HTML",
 		"disable_notification": silent,
 	}
 
@@ -45,10 +54,16 @@ func (t *Telegram) Send(title, message string, silent bool) error {
 		return fmt.Errorf("marshaling payload: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/bot%s/sendMessage", t.baseURL, t.botToken)
-	resp, err := t.client.Post(url, "application/json", bytes.NewReader(body))
+	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", t.baseURL, t.botToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("sending telegram message: %w", err)
+		return fmt.Errorf("building request: %w", withoutURL(err))
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending telegram message: %w", withoutURL(err))
 	}
 	defer resp.Body.Close()
 
@@ -61,15 +76,14 @@ func (t *Telegram) Send(title, message string, silent bool) error {
 	return nil
 }
 
-// markdownV2 escapes every character Telegram's MarkdownV2 parser treats as
-// markup. Anything unescaped makes the API reject the whole message, so a
-// stray bracket in a journal excerpt would lose the alert entirely.
-var markdownV2 = strings.NewReplacer(
-	"_", "\\_", "*", "\\*", "[", "\\[", "]", "\\]",
-	"(", "\\(", ")", "\\)", "~", "\\~", "`", "\\`",
-	">", "\\>", "#", "\\#", "+", "\\+", "-", "\\-",
-	"=", "\\=", "|", "\\|", "{", "\\{", "}", "\\}",
-	".", "\\.", "!", "\\!",
-)
-
-func escapeMarkdown(s string) string { return markdownV2.Replace(s) }
+// withoutURL strips the request URL out of a transport error. The bot token is
+// part of that URL, and morse's errors go to stderr — under a systemd handler,
+// straight into the journal — so reporting one verbatim would publish the
+// credential every time the network hiccuped.
+func withoutURL(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
+}

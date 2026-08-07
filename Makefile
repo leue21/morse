@@ -26,12 +26,13 @@ clean:
 install: build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 $(BINARY) $(DESTDIR)$(BINDIR)/$(BINARY)
-	mkdir -p $(CONFIGDIR)
+	install -d -m 700 $(CONFIGDIR)
 	@if [ ! -f $(CONFIGDIR)/config.yaml ]; then \
 		install -m 600 config.yaml.example $(CONFIGDIR)/config.yaml; \
 		echo "Installed example config to $(CONFIGDIR)/config.yaml — edit with your credentials"; \
 	else \
-		echo "Config already exists at $(CONFIGDIR)/config.yaml — not overwriting"; \
+		chmod 600 $(CONFIGDIR)/config.yaml; \
+		echo "Config already exists at $(CONFIGDIR)/config.yaml — not overwriting (mode set to 600)"; \
 	fi
 	install -d $(HOME)/.config/systemd/user
 	install -m 644 notify@.service $(HOME)/.config/systemd/user/notify@.service

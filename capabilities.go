@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
+	"strings"
 
 	"morse/config"
 )
@@ -41,7 +42,8 @@ type SendContract struct {
 // to ask of an installation that is not set up yet, and refusing would make the
 // command useless exactly when it is most wanted.
 func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("capabilities", flag.ExitOnError)
+	fs := flag.NewFlagSet("capabilities", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // the error is returned and reported once, by main
 	configPath := fs.String("config", defaultConfig, "path to config file")
 	asJSON := fs.Bool("json", false, "emit the capabilities as JSON")
 	if err := fs.Parse(args); err != nil {
@@ -74,22 +76,17 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 		return enc.Encode(caps)
 	}
 
-	fmt.Fprintf(out, "%s %s\n", caps.Name, caps.Version)
-	fmt.Fprintf(out, "config    %s\n", caps.Config)
 	state := "not configured"
 	if caps.Delivery.Configured {
 		state = "configured"
 	}
-	fmt.Fprintf(out, "delivery  %s (%s)\n", caps.Delivery.Channel, state)
+	fmt.Fprintf(out, "%s %s\nconfig    %s\ndelivery  %s (%s)\n",
+		caps.Name, caps.Version, caps.Config, caps.Delivery.Channel, state)
 	if caps.ConfigErr != "" {
 		fmt.Fprintf(out, "          %s\n", caps.ConfigErr)
 	}
-	fmt.Fprintf(out, "env       %v\n", caps.Delivery.Env)
-	fmt.Fprintf(out, "\nsend\n  %s\n", caps.Send.Usage)
-	fmt.Fprintf(out, "  %s\n", caps.Send.Silent)
-	if caps.Send.BodyStdin {
-		fmt.Fprintf(out, "  the body is read from stdin when no body argument is given\n")
-	}
+	fmt.Fprintf(out, "env       %s\n\nsend\n  %s\n  %s\n  the body is read from stdin when no body argument is given\n",
+		strings.Join(caps.Delivery.Env, " "), caps.Send.Usage, caps.Send.Silent)
 	return nil
 }
 
@@ -115,8 +112,5 @@ func buildVersion() string {
 	if revision == "" {
 		return "devel"
 	}
-	if len(revision) > 12 {
-		revision = revision[:12]
-	}
-	return revision + modified
+	return revision[:min(len(revision), 12)] + modified
 }

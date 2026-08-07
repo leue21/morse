@@ -19,8 +19,10 @@ a person at a prompt.
 make install
 ```
 
-Installs the binary under `~/.local/bin` and the `notify@.service` handler. No
-step needs root, and there is no service to start.
+Installs the binary under `~/.local/bin`, the `notify@.service` handler under
+`~/.config/systemd/user`, and — only if there is not one already — an example
+`~/.config/morse/config.yaml` to fill in. No step needs root, and there is no
+service to start.
 
 ## Configuration
 
@@ -56,9 +58,13 @@ morse capabilities [--json]            what morse accepts, for a caller
 morse help
 ```
 
-With no body argument the body is read from stdin, so a caller can pipe in a
-log excerpt. A title on its own still sends: a unit that died without logging
-is exactly the case worth hearing about.
+Both subcommands take `--config <path>` to read credentials from somewhere
+other than `~/.config/morse/config.yaml`. Flags come before the title; a flag
+after it would otherwise end up in the message body.
+
+With no body argument the body is read from stdin when something is piped in,
+so a caller can pass a log excerpt that way. A title on its own still sends: a
+unit that died without logging is exactly the case worth hearing about.
 
 `--silent` delivers without a notification sound. The message still arrives and
 stays in the chat — it just does not buzz, so routine facts can be reported

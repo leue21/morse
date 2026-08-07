@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,7 @@ func TestResolveMessage(t *testing.T) {
 		wantTitle  string
 		wantBody   string
 		wantErrStr string
+		noStdin    bool
 	}{{
 		name: "body from arguments", args: []string{"Disk", "almost", "full"},
 		wantTitle: "Disk", wantBody: "almost full",
@@ -23,15 +25,27 @@ func TestResolveMessage(t *testing.T) {
 	}, {
 		// A caller with nothing to add still has something to report: a unit
 		// that died without logging is exactly the case worth hearing about.
-		name: "title alone still reports", args: []string{"Unit failed: dewey.service"},
+		// Nothing is piped in, which is the terminal case: reading stdin there
+		// would block instead of sending.
+		name: "title alone still reports", args: []string{"Unit failed: dewey.service"}, noStdin: true,
+
 		wantTitle: "Unit failed: dewey.service", wantBody: "(no details)",
 	}, {
 		name: "nothing at all", wantErrStr: "nothing to send",
+	}, {
+		name: "nothing at all, no stdin", noStdin: true, wantErrStr: "nothing to send",
+	}, {
+		name: "flag after the title", args: []string{"Backup", "--silent"},
+		wantErrStr: "must come before the title",
 	}}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			title, body, err := resolveMessage(tc.args, strings.NewReader(tc.stdin))
+			var stdin io.Reader
+			if !tc.noStdin {
+				stdin = strings.NewReader(tc.stdin)
+			}
+			title, body, err := resolveMessage(tc.args, stdin)
 			if tc.wantErrStr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErrStr) {
 					t.Fatalf("err = %v, want %q", err, tc.wantErrStr)

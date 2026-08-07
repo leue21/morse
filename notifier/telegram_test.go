@@ -1,8 +1,10 @@
 package notifier
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"morse/internal/testutil"
@@ -16,7 +18,7 @@ func TestSendSuccess(t *testing.T) {
 	tg := NewTelegram("tok123", 42)
 	tg.baseURL = srv.URL()
 
-	err := tg.Send("Test Title", "Hello world", false)
+	err := tg.Send(context.Background(), "Test Title", "Hello world", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -34,8 +36,8 @@ func TestSendSuccess(t *testing.T) {
 
 	var received map[string]any
 	json.Unmarshal(req.Body, &received)
-	if received["parse_mode"] != "MarkdownV2" {
-		t.Errorf("parse_mode = %v, want MarkdownV2", received["parse_mode"])
+	if received["parse_mode"] != "HTML" {
+		t.Errorf("parse_mode = %v, want HTML", received["parse_mode"])
 	}
 	chatID, ok := received["chat_id"].(float64)
 	if !ok || int64(chatID) != 42 {
@@ -51,39 +53,48 @@ func TestSendAPIError(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	err := tg.Send("Title", "Msg", false)
+	err := tg.Send(context.Background(), "Title", "Msg", false)
 	if err == nil {
 		t.Fatal("expected error for 400 response")
 	}
 }
 
 func TestSendNetworkError(t *testing.T) {
-	tg := NewTelegram("tok", 1)
+	tg := NewTelegram("s3cr3t-token", 1)
 	tg.baseURL = "http://127.0.0.1:1" // nothing listening
 
-	err := tg.Send("Title", "Msg", false)
+	err := tg.Send(context.Background(), "Title", "Msg", false)
 	if err == nil {
 		t.Fatal("expected error for unreachable server")
 	}
+	// morse's errors reach stderr and, under the systemd handler, the journal.
+	if strings.Contains(err.Error(), "s3cr3t-token") {
+		t.Errorf("error leaks the bot token: %v", err)
+	}
 }
 
-func TestEscapeMarkdown(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"hello", "hello"},
-		{"price: $100.50", "price: $100\\.50"},
-		{"foo_bar", "foo\\_bar"},
-		{"(test)", "\\(test\\)"},
-		{"a > b", "a \\> b"},
-		{"1+1=2", "1\\+1\\=2"},
+// Telegram rejects a message whose text contains unescaped markup, which would
+// lose the alert entirely — and a journal excerpt is exactly where stray markup
+// comes from.
+func TestSendEscapesMarkupInTheMessage(t *testing.T) {
+	srv := testutil.NewFakeAPI(t).
+		Handle("POST", "/bottok/sendMessage", 200, `{"ok":true}`).
+		Start()
+
+	tg := NewTelegram("tok", 1)
+	tg.baseURL = srv.URL()
+
+	if err := tg.Send(context.Background(), "a<b & c", `open("x") failed: [Errno 2] C:\logs`, false); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range tests {
-		got := escapeMarkdown(tc.input)
-		if got != tc.want {
-			t.Errorf("escapeMarkdown(%q) = %q, want %q", tc.input, got, tc.want)
-		}
+	var payload map[string]any
+	if err := json.Unmarshal(srv.Requests[0].Body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := payload["text"].(string)
+	want := "<b>a&lt;b &amp; c</b>\nopen(&#34;x&#34;) failed: [Errno 2] C:\\logs"
+	if text != want {
+		t.Errorf("text = %q, want %q", text, want)
 	}
 }
 
@@ -95,7 +106,7 @@ func TestSendMapsSilenceToTheTelegramFlag(t *testing.T) {
 		tg := NewTelegram("tok", 42)
 		tg.baseURL = srv.URL()
 
-		if err := tg.Send("Title", "Body", silent); err != nil {
+		if err := tg.Send(context.Background(), "Title", "Body", silent); err != nil {
 			t.Fatal(err)
 		}
 		var payload map[string]any
