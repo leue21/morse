@@ -68,6 +68,8 @@ func usage(out io.Writer) {
 usage:
   morse send [--silent] [--file path] <title> [body]
                               send a message; body may come from stdin
+  morse send --title <t> --body <b>
+                              the same, named rather than positional
   morse capabilities [--json] what morse accepts, for a caller
   morse version
   morse help
@@ -84,12 +86,15 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string) error {
 	configPath := fs.String("config", defaultConfig, "path to config file")
 	silent := fs.Bool("silent", false, "deliver without a notification sound")
 	file := fs.String("file", "", "upload this file, with the title and body as its caption")
+	titleFlag := fs.String("title", "", "the title, instead of the first argument")
+	bodyFlag := fs.String("body", "", "the body, instead of the remaining arguments")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	// A file is something to send in its own right, so a bare `morse send
 	// --file report.pdf` is a complete instruction and needs no title.
-	title, body, err := resolveMessage(fs.Args(), pipedStdin(os.Stdin), *file != "")
+	title, body, err := resolveMessage(fs.Args(), pipedStdin(os.Stdin), *file != "",
+		given(fs, "title", titleFlag), given(fs, "body", bodyFlag))
 	if err != nil {
 		return err
 	}
@@ -116,18 +121,38 @@ func pipedStdin(f *os.File) io.Reader {
 	return f
 }
 
+// given returns the flag's value only when it was actually passed, so an
+// explicit --body "" can be told apart from a --body that was never mentioned.
+// A caller assembling a command from variables passes empty strings routinely,
+// and the two cases mean different things: one says "no body", the other leaves
+// the arguments and stdin to answer.
+func given(fs *flag.FlagSet, name string, value *string) *string {
+	var set bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	if !set {
+		return nil
+	}
+	return value
+}
+
 // resolveMessage works out what a send invocation should report. Text after the
 // title becomes the body; with no body arguments it is read from stdin (when
 // anything is piped in), so a caller can pass a log excerpt that way.
 //
+// titleFlag and bodyFlag carry --title and --body when they were passed, and
+// take precedence: a script building a command from variables should not have
+// to care whether a value starts with a dash or came out empty and shifted
+// everything along. What a flag supplies, the positional arguments no longer
+// have to mean — with --title given, everything left is body — and a positional
+// with nothing left to be is an error rather than a silently dropped message.
+//
 // haveFile says the invocation already carries something worth delivering, so
 // empty text is not an empty send.
-func resolveMessage(args []string, stdin io.Reader, haveFile bool) (title, body string, err error) {
-	title = "morse"
-	titled := false
-	if len(args) > 0 {
-		title, args, titled = args[0], args[1:], true
-	}
+func resolveMessage(args []string, stdin io.Reader, haveFile bool, titleFlag, bodyFlag *string) (title, body string, err error) {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "-") {
 			// Go's flag package stops at the first positional argument, so a
@@ -136,8 +161,25 @@ func resolveMessage(args []string, stdin io.Reader, haveFile bool) (title, body 
 			return "", "", fmt.Errorf("flag %q must come before the title", arg)
 		}
 	}
-	body = strings.Join(args, " ")
-	if body == "" && stdin != nil {
+
+	title = "morse"
+	titled := false
+	switch {
+	case titleFlag != nil:
+		title, titled = *titleFlag, *titleFlag != ""
+	case len(args) > 0:
+		title, args, titled = args[0], args[1:], true
+	}
+	if bodyFlag != nil && len(args) > 0 {
+		return "", "", fmt.Errorf("--body given, so %q has nothing to be", args[0])
+	}
+
+	if bodyFlag != nil {
+		body = *bodyFlag
+	} else {
+		body = strings.Join(args, " ")
+	}
+	if body == "" && bodyFlag == nil && stdin != nil {
 		piped, err := io.ReadAll(stdin)
 		if err != nil {
 			return "", "", fmt.Errorf("read message: %w", err)

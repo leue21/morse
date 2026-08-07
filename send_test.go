@@ -6,10 +6,16 @@ import (
 	"testing"
 )
 
+// ptr marks a flag as passed: resolveMessage tells --body "" from no --body at
+// all, and a test table needs to say which it means.
+func ptr(s string) *string { return &s }
+
 func TestResolveMessage(t *testing.T) {
 	tests := []struct {
 		name       string
 		args       []string
+		titleFlag  *string
+		bodyFlag   *string
 		stdin      string
 		wantTitle  string
 		wantBody   string
@@ -51,6 +57,45 @@ func TestResolveMessage(t *testing.T) {
 		name: "a file still takes a piped body", args: []string{"Nightly report"},
 		haveFile: true, stdin: "412 files, 3m21s\n",
 		wantTitle: "Nightly report", wantBody: "412 files, 3m21s",
+	}, {
+		name: "named flags", titleFlag: ptr("Disk"), bodyFlag: ptr("almost full"),
+		noStdin:   true,
+		wantTitle: "Disk", wantBody: "almost full",
+	}, {
+		// A value that starts with a dash is the case the positional form
+		// cannot take at all.
+		name: "a body may start with a dash", titleFlag: ptr("Diff"),
+		bodyFlag: ptr("-3 lines"), noStdin: true,
+		wantTitle: "Diff", wantBody: "-3 lines",
+	}, {
+		// With the title named, nothing is left for the arguments to be but
+		// the body — including a first word that would otherwise be the title.
+		name: "arguments are the body once the title is named",
+		args: []string{"almost", "full"}, titleFlag: ptr("Disk"), noStdin: true,
+		wantTitle: "Disk", wantBody: "almost full",
+	}, {
+		name: "a named body still leaves the title positional",
+		args: []string{"Disk"}, bodyFlag: ptr("almost full"), noStdin: true,
+		wantTitle: "Disk", wantBody: "almost full",
+	}, {
+		// Dropping it would send a message missing the part the caller wrote.
+		name: "an argument with nothing left to be", args: []string{"Disk", "full"},
+		titleFlag: ptr("Disk"), bodyFlag: ptr("almost full"), noStdin: true,
+		wantErrStr: "has nothing to be",
+	}, {
+		// The flag was passed, so the caller has answered the question that
+		// stdin would otherwise be asked.
+		name: "an explicit empty body does not fall through to stdin",
+		titleFlag: ptr("Build failed"), bodyFlag: ptr(""),
+		stdin:     "panic: nil map\n",
+		wantTitle: "Build failed", wantBody: "(no details)",
+	}, {
+		name: "a named title still takes a piped body", titleFlag: ptr("Build failed"),
+		stdin:     "panic: nil map\n",
+		wantTitle: "Build failed", wantBody: "panic: nil map",
+	}, {
+		name: "named nothing", titleFlag: ptr(""), bodyFlag: ptr(""), noStdin: true,
+		wantErrStr: "nothing to send",
 	}}
 
 	for _, tc := range tests {
@@ -59,7 +104,7 @@ func TestResolveMessage(t *testing.T) {
 			if !tc.noStdin {
 				stdin = strings.NewReader(tc.stdin)
 			}
-			title, body, err := resolveMessage(tc.args, stdin, tc.haveFile)
+			title, body, err := resolveMessage(tc.args, stdin, tc.haveFile, tc.titleFlag, tc.bodyFlag)
 			if tc.wantErrStr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErrStr) {
 					t.Fatalf("err = %v, want %q", err, tc.wantErrStr)

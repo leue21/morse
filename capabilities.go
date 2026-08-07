@@ -33,6 +33,7 @@ type Delivery struct {
 // SendContract describes `morse send` precisely enough to call it blind.
 type SendContract struct {
 	Usage     string `json:"usage"`
+	Named     string `json:"named"`
 	Silent    string `json:"silent"`
 	BodyStdin bool   `json:"body_from_stdin"`
 	File      string `json:"file"`
@@ -61,6 +62,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 		},
 		Send: SendContract{
 			Usage:     "morse send [--silent] [--file path] <title> [body]",
+			Named:     "--title and --body take the same two values by name, and win over the arguments; safest for a caller building a command from variables",
 			Silent:    "--silent delivers without a notification sound; the message still arrives",
 			BodyStdin: true,
 			File:      "--file uploads that file, with the title and body as its caption; at most 50 MB",
@@ -87,8 +89,8 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 	if caps.ConfigErr != "" {
 		fmt.Fprintf(out, "          %s\n", caps.ConfigErr)
 	}
-	fmt.Fprintf(out, "env       %s\n\nsend\n  %s\n  %s\n  %s\n  the body is read from stdin when no body argument is given\n",
-		strings.Join(caps.Delivery.Env, " "), caps.Send.Usage, caps.Send.Silent, caps.Send.File)
+	fmt.Fprintf(out, "env       %s\n\nsend\n  %s\n  %s\n  %s\n  %s\n  the body is read from stdin when no body argument is given\n",
+		strings.Join(caps.Delivery.Env, " "), caps.Send.Usage, caps.Send.Named, caps.Send.Silent, caps.Send.File)
 	return nil
 }
 
