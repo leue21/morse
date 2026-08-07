@@ -1,9 +1,13 @@
 package notifier
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -180,4 +184,62 @@ func TestEscapeMarkdown(t *testing.T) {
 			t.Errorf("escapeMarkdown(%q) = %q, want %q", tc.input, got, tc.want)
 		}
 	}
+}
+
+// Telegram explains a failed poll in the response body. Logging only "ok=false"
+// made a second process polling the same bot look identical to a bad token or a
+// webhook holding the updates, which is a slow thing to diagnose.
+func TestPollCommandsLogsTelegramsReason(t *testing.T) {
+	conflict := `{"ok":false,"error_code":409,"description":"Conflict: terminated by other getUpdates request"}`
+
+	logged := &lockedBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logged, &slog.HandlerOptions{Level: slog.LevelError})))
+	defer slog.SetDefault(previous)
+
+	srv := testutil.NewFakeAPI(t).
+		Handle("GET", "/bottok/getUpdates", 200, conflict).
+		Start()
+
+	tg := NewTelegram("tok", 42)
+	tg.baseURL = srv.URL()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go tg.PollCommands(ctx, func(string) string { return "" })
+
+	// The loop backs off for five seconds after a rejection, so assert as soon
+	// as the line appears rather than waiting for it to come round again.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(logged.String(), "getUpdates rejected") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	out := logged.String()
+	if !strings.Contains(out, "409") {
+		t.Errorf("log does not carry the error code: %q", out)
+	}
+	if !strings.Contains(out, "terminated by other getUpdates") {
+		t.Errorf("log does not carry Telegram's description: %q", out)
+	}
+}
+
+// lockedBuffer lets the test read what the polling goroutine has logged.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
 }

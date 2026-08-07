@@ -65,7 +65,7 @@ func (t *Telegram) Send(title, message string) error {
 
 // Update represents a Telegram Bot API update.
 type Update struct {
-	UpdateID int64    `json:"update_id"`
+	UpdateID int64      `json:"update_id"`
 	Message  *TGMessage `json:"message"`
 }
 
@@ -110,14 +110,21 @@ func (t *Telegram) PollCommands(ctx context.Context, handler CommandHandler) {
 		}
 
 		var result struct {
-			OK     bool     `json:"ok"`
-			Result []Update `json:"result"`
+			OK          bool     `json:"ok"`
+			ErrorCode   int      `json:"error_code"`
+			Description string   `json:"description"`
+			Result      []Update `json:"result"`
 		}
 		json.NewDecoder(resp.Body).Decode(&result)
 		resp.Body.Close()
 
 		if !result.OK {
-			slog.Error("getUpdates returned ok=false")
+			// Telegram says why in the body. Logging only "ok=false" hides the
+			// difference between a bad token, a webhook holding the updates,
+			// and a second process polling the same bot -- which read
+			// identically and cost an hour to tell apart.
+			slog.Error("getUpdates rejected",
+				"code", result.ErrorCode, "description", result.Description)
 			time.Sleep(5 * time.Second)
 			continue
 		}
