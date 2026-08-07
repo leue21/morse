@@ -5,8 +5,11 @@ Description=Report that %i failed
 
 [Service]
 Type=oneshot
-# The journal excerpt arrives on stdin, which `salert send` uses as the body, so
-# the message says what broke rather than only that something did.
-ExecStart=/bin/sh -c 'journalctl --user -u %i -n 15 --no-pager --output=cat | /usr/local/bin/salert send "Unit failed: %i"'
+# --user-unit=, not --user -u: the latter reads the calling user's own journal
+# and returns nothing for a unit run by the user manager, which silently left
+# every alert without its diagnostic.
+# The excerpt arrives on stdin, which `salert send` uses as the body, so the
+# message says what broke rather than only that something did.
+ExecStart=/bin/sh -c 'journalctl --user-unit=%i -n 15 --no-pager --output=cat | /usr/local/bin/salert send "Unit failed: %i"'
 # Never let a failing notifier become a second thing to chase.
 TimeoutStartSec=30
