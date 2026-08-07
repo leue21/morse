@@ -21,7 +21,7 @@ Run a single test:
 
 ## Architecture
 
-**salert** is a plugin-based Telegram alerting bot. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is stdlib).
+**morse** is a plugin-based Telegram alerting bot. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is stdlib).
 
 ```
 main.go              → wires config, plugins, scheduler, notifier; handles signals
@@ -42,7 +42,7 @@ Config load → `buildPlugins()` constructs plugins → `scheduler.Add(plugin, i
 
 ### Configuration
 
-Config lives at `~/.config/salert/config.yaml` (override with `-config` flag). Plugin data files (e.g., `tgtg_tokens.json`) are stored alongside the config file (`dataDir` = config file's directory).
+Config lives at `~/.config/morse/config.yaml` (override with `-config` flag). Plugin data files (e.g., `tgtg_tokens.json`) are stored alongside the config file (`dataDir` = config file's directory).
 
 ## Conventions
 

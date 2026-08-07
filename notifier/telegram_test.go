@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"salert/internal/testutil"
+	"morse/internal/testutil"
 )
 
 func TestSendSuccess(t *testing.T) {

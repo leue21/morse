@@ -1,5 +1,5 @@
 [Unit]
-Description=salert - plugin-based Telegram notification service
+Description=morse - plugin-based Telegram notification service
 After=network-online.target
 Wants=network-online.target
 
@@ -13,7 +13,7 @@ OnFailure=notify@%n.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/salert
+ExecStart=%h/.local/bin/morse
 Restart=on-failure
 RestartSec=10
 

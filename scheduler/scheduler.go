@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"salert/notifier"
-	"salert/plugin"
+	"morse/notifier"
+	"morse/plugin"
 )
 
 // Entry pairs a plugin with its polling interval.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"salert/internal/testutil"
+	"morse/internal/testutil"
 )
 
 // --- BTCPrice tests ---

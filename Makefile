@@ -1,9 +1,10 @@
-PREFIX    ?= /usr/local
+# Installs under $HOME so no step needs root, matching dewey on this host.
+PREFIX    ?= $(HOME)/.local
 BINDIR    ?= $(PREFIX)/bin
-BINARY    ?= salert
-SERVICE   ?= salert.service
+BINARY    ?= morse
+SERVICE   ?= morse.service
 GO        ?= /usr/local/go/bin/go
-CONFIGDIR ?= $(HOME)/.config/salert
+CONFIGDIR ?= $(HOME)/.config/morse
 
 .PHONY: all build test vet clean install uninstall enable disable restart status logs
 
@@ -24,8 +25,8 @@ clean:
 ## Installation
 
 install: build
-	sudo install -d $(DESTDIR)$(BINDIR)
-	sudo install -m 755 $(BINARY) $(DESTDIR)$(BINDIR)/$(BINARY)
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 $(BINARY) $(DESTDIR)$(BINDIR)/$(BINARY)
 	mkdir -p $(CONFIGDIR)
 	@if [ ! -f $(CONFIGDIR)/config.yaml ]; then \
 		install -m 600 config.yaml.example $(CONFIGDIR)/config.yaml; \
