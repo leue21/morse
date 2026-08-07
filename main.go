@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -24,6 +26,18 @@ func main() {
 		os.Exit(1)
 	}
 	defaultConfig := filepath.Join(home, ".config", "salert", "config.yaml")
+
+	// `salert send <text>` posts a single message and exits. systemd OnFailure
+	// handlers need to report a unit that died, which the scheduled plugins
+	// cannot do: by then this process may be the thing that died.
+	if len(os.Args) > 1 && os.Args[1] == "send" {
+		if err := sendOnce(defaultConfig, os.Args[2:]); err != nil {
+			slog.Error("send failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	configPath := flag.String("config", defaultConfig, "path to config file")
 	flag.Parse()
 
@@ -131,6 +145,17 @@ func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler, dataDir string
 		plugins = append(plugins, p)
 	}
 
+	if pc, ok := cfg.Plugins["diskspace"]; ok {
+		p := plugin.NewDiskSpace(
+			pc.GetStringSlice("paths"),
+			pc.GetFloat("min_free_percent"),
+			pc.GetFloat("min_free_gb"),
+			pc.GetDuration("cooldown"),
+		)
+		sched.Add(p, pc.ParseInterval())
+		plugins = append(plugins, p)
+	}
+
 	if pc, ok := cfg.Plugins["toogoodtogo"]; ok {
 		p := plugin.NewTooGoodToGo(
 			pc.GetString("email"),
@@ -141,4 +166,46 @@ func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler, dataDir string
 	}
 
 	return plugins
+}
+
+// resolveMessage works out what a `salert send` invocation should report.
+// Text after the title becomes the body; with no body arguments it is read from
+// stdin, so a caller can pipe in a journal excerpt.
+func resolveMessage(args []string, stdin io.Reader) (title, body string, err error) {
+	title = "salert"
+	titled := false
+	if len(args) > 0 {
+		title, args, titled = args[0], args[1:], true
+	}
+	body = strings.Join(args, " ")
+	if body == "" {
+		piped, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", "", fmt.Errorf("read message: %w", err)
+		}
+		body = strings.TrimSpace(string(piped))
+	}
+	if body == "" {
+		if !titled {
+			return "", "", errors.New("nothing to send")
+		}
+		// A unit that dies without logging anything is still worth reporting —
+		// arguably more so. The title carries which unit failed, so an empty
+		// journal must not swallow the alert.
+		body = "(no journal output)"
+	}
+	return title, body, nil
+}
+
+// sendOnce posts one message using the configured Telegram credentials.
+func sendOnce(configPath string, args []string) error {
+	title, body, err := resolveMessage(args, os.Stdin)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	return notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID).Send(title, body)
 }

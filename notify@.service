@@ -1,0 +1,12 @@
+[Unit]
+Description=Report that %i failed
+# Deliberately no Requires= on salert.service: this must still deliver when the
+# alerting daemon itself is the unit that died.
+
+[Service]
+Type=oneshot
+# The journal excerpt arrives on stdin, which `salert send` uses as the body, so
+# the message says what broke rather than only that something did.
+ExecStart=/bin/sh -c 'journalctl --user -u %i -n 15 --no-pager --output=cat | /usr/local/bin/salert send "Unit failed: %i"'
+# Never let a failing notifier become a second thing to chase.
+TimeoutStartSec=30
