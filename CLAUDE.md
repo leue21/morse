@@ -16,39 +16,31 @@ make install        # install binary + systemd user service + config
 
 Run a single test:
 ```bash
-/usr/local/go/bin/go test ./plugin -run TestDiskSpaceAlertsOnEitherThreshold -v
+/usr/local/go/bin/go test ./config -run TestLoadFromEnvironmentWithoutAFile -v
 ```
 
 ## Architecture
 
-**morse** is a plugin-based Telegram alerting daemon for this host: it watches things on a schedule and reports what it finds, and `morse send` posts one-off messages for systemd OnFailure handlers. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is stdlib).
+**morse** is a CLI that sends a Telegram message. No daemon, no scheduler, no
+plugins — callers decide when to speak. Minimal dependencies (only
+`gopkg.in/yaml.v3`; everything else is stdlib).
 
 ```
-main.go              → subcommand dispatch (send, capabilities); wires config, plugins, scheduler, notifier
+main.go              → subcommand dispatch (send, capabilities, help) and the send command
 capabilities.go      → `morse capabilities`: the callable interface, as text or JSON
-config/              → YAML parsing; PluginConf provides generic accessors (GetString, GetFloat, GetDuration, etc.)
-plugin/              → Plugin interface (Name, Check, Describe), Severity, + implementations (diskspace)
-scheduler/           → runs each plugin in its own goroutine on a time.Ticker, calls Check() immediately then on interval
-notifier/            → Telegram Bot API client (Send + long-poll PollCommands)
+config/              → telegram credentials, from the file or MORSE_BOT_TOKEN / MORSE_CHAT_ID
+notifier/            → Telegram Bot API client (Send)
 internal/testutil/   → FakeAPI HTTP mock for tests
+contrib/diskguard/   → an example consumer: a systemd timer that calls `morse send`
 ```
 
-### Plugin system
-
-Plugins implement `plugin.Plugin` interface (`Name()`, `Check(ctx) ([]Alert, error)`, `Describe()`). Registration is manual in `buildPlugins()` in main.go — each plugin key in config maps to a constructor call. Config values are accessed via `PluginConf` generic accessors, not per-plugin config structs.
-
-### Data flow
-
-Config load → `buildPlugins()` constructs plugins → `scheduler.Add(plugin, interval)` → `scheduler.Run(ctx)` starts per-plugin goroutines → `Check()` returns `[]Alert` → `notifier.Send()` to Telegram.
-
-### Configuration
-
-Config lives at `~/.config/morse/config.yaml` (override with `-config` flag). Plugin data files (e.g., `tgtg_tokens.json`) are stored alongside the config file (`dataDir` = config file's directory).
+Anything that needs to watch something is a separate job that calls `morse
+send`, not code inside morse. contrib/diskguard is the reference for that shape.
 
 ## Conventions
 
-- Alerts carry a `plugin.Severity`; each channel maps it to its own delivery behaviour (Telegram: `info` sets `disable_notification`)
-- Errors are wrapped with `fmt.Errorf("context: %w", err)` and never fatal in the scheduler (logged and continued)
+- `--silent` maps to Telegram's `disable_notification`; the message still arrives
+- Errors are wrapped with `fmt.Errorf("context: %w", err)`; the CLI exits non-zero and prints to stderr
 - Logging via `log/slog`; per-plugin loggers use `slog.With("plugin", name)`
 - All HTTP calls use `http.NewRequestWithContext(ctx, ...)` for cancellation
 - Each plugin creates its own `http.Client` with appropriate timeouts

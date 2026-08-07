@@ -3,158 +3,83 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-	"time"
 )
 
-func writeTestConfig(t *testing.T, content string) string {
+func write(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
 }
 
-func TestLoadValid(t *testing.T) {
-	path := writeTestConfig(t, `
-telegram:
-  bot_token: "tok123"
-  chat_id: 999
+func TestLoadFromFile(t *testing.T) {
+	cfg, err := Load(write(t, "telegram:\n  bot_token: \"tok123\"\n  chat_id: 999\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telegram.BotToken != "tok123" || cfg.Telegram.ChatID != 999 {
+		t.Errorf("got %+v", cfg.Telegram)
+	}
+}
 
-plugins:
-  diskspace:
-    interval: "2m"
-    min_free_percent: 8.0
-    min_free_gb: 120.0
-    cooldown: "15m"
-    paths: ["/", "/srv"]
-`)
+// An agent or a container should be able to use morse with no config file at
+// all: two variables is a much lower bar than installing and editing a file.
+func TestLoadFromEnvironmentWithoutAFile(t *testing.T) {
+	t.Setenv(BotTokenEnv, "envtok")
+	t.Setenv(ChatIDEnv, "4242")
+
+	cfg, err := Load("/nonexistent/config.yaml")
+	if err != nil {
+		t.Fatalf("a missing file with the environment set must load: %v", err)
+	}
+	if cfg.Telegram.BotToken != "envtok" || cfg.Telegram.ChatID != 4242 {
+		t.Errorf("got %+v", cfg.Telegram)
+	}
+}
+
+func TestEnvironmentOverridesFile(t *testing.T) {
+	path := write(t, "telegram:\n  bot_token: \"fromfile\"\n  chat_id: 1\n")
+	t.Setenv(BotTokenEnv, "fromenv")
+
 	cfg, err := Load(path)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-
-	if cfg.Telegram.BotToken != "tok123" {
-		t.Errorf("bot_token = %q, want %q", cfg.Telegram.BotToken, "tok123")
+	if cfg.Telegram.BotToken != "fromenv" {
+		t.Errorf("bot_token = %q, want the environment to win", cfg.Telegram.BotToken)
 	}
-	if cfg.Telegram.ChatID != 999 {
-		t.Errorf("chat_id = %d, want 999", cfg.Telegram.ChatID)
-	}
-
-	disk, ok := cfg.Plugins["diskspace"]
-	if !ok {
-		t.Fatal("diskspace plugin config missing")
-	}
-	if disk.ParseInterval() != 2*time.Minute {
-		t.Errorf("interval = %v, want 2m", disk.ParseInterval())
-	}
-	if disk.GetFloat("min_free_percent") != 8.0 {
-		t.Errorf("min_free_percent = %f, want 8", disk.GetFloat("min_free_percent"))
-	}
-	if disk.GetFloat("min_free_gb") != 120.0 {
-		t.Errorf("min_free_gb = %f, want 120", disk.GetFloat("min_free_gb"))
-	}
-	if disk.GetDuration("cooldown") != 15*time.Minute {
-		t.Errorf("cooldown = %v, want 15m", disk.GetDuration("cooldown"))
-	}
-	paths := disk.GetStringSlice("paths")
-	if len(paths) != 2 || paths[0] != "/" || paths[1] != "/srv" {
-		t.Errorf("paths = %v, want [/ /srv]", paths)
+	// Only what the environment sets is overridden.
+	if cfg.Telegram.ChatID != 1 {
+		t.Errorf("chat_id = %d, want the file's value kept", cfg.Telegram.ChatID)
 	}
 }
 
-func TestLoadMissingFile(t *testing.T) {
-	_, err := Load("/nonexistent/config.yaml")
-	if err == nil {
-		t.Fatal("expected error for missing file")
+// The error has to say where to put the missing value, or the reader has to go
+// looking for documentation that may not be to hand.
+func TestLoadReportsWhereCredentialsGo(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"no token", "telegram:\n  chat_id: 1\n", BotTokenEnv},
+		{"no chat id", "telegram:\n  bot_token: \"t\"\n", ChatIDEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(write(t, tc.body))
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not mention %s", err, tc.want)
+			}
+		})
 	}
 }
 
-func TestLoadMissingBotToken(t *testing.T) {
-	path := writeTestConfig(t, `
-telegram:
-  chat_id: 123
-`)
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("expected error for missing bot_token")
-	}
-}
-
-func TestLoadMissingChatID(t *testing.T) {
-	path := writeTestConfig(t, `
-telegram:
-  bot_token: "tok"
-`)
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("expected error for missing chat_id")
-	}
-}
-
-func TestLoadInvalidYAML(t *testing.T) {
-	path := writeTestConfig(t, `:::not valid yaml`)
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("expected error for invalid YAML")
-	}
-}
-
-func TestPluginConfDefaults(t *testing.T) {
-	path := writeTestConfig(t, `
-telegram:
-  bot_token: "tok"
-  chat_id: 1
-
-plugins:
-  test:
-    foo: "bar"
-`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	pc := cfg.Plugins["test"]
-
-	// Missing interval defaults to 5m.
-	if pc.ParseInterval() != 5*time.Minute {
-		t.Errorf("default interval = %v, want 5m", pc.ParseInterval())
-	}
-
-	// Missing keys return zero values.
-	if pc.GetString("missing") != "" {
-		t.Error("expected empty string for missing key")
-	}
-	if pc.GetFloat("missing") != 0 {
-		t.Error("expected 0 for missing float key")
-	}
-	if pc.GetStringSlice("missing") != nil {
-		t.Error("expected nil for missing slice key")
-	}
-	if pc.GetDuration("missing") != 0 {
-		t.Error("expected 0 for missing duration key")
-	}
-}
-
-func TestParseIntervalInvalid(t *testing.T) {
-	path := writeTestConfig(t, `
-telegram:
-  bot_token: "tok"
-  chat_id: 1
-
-plugins:
-  test:
-    interval: "notaduration"
-`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	pc := cfg.Plugins["test"]
-	if pc.ParseInterval() != 5*time.Minute {
-		t.Errorf("invalid interval should default to 5m, got %v", pc.ParseInterval())
+func TestLoadRejectsANonNumericChatID(t *testing.T) {
+	t.Setenv(ChatIDEnv, "not-a-number")
+	if _, err := Load(write(t, "telegram:\n  bot_token: \"t\"\n  chat_id: 1\n")); err == nil {
+		t.Error("want an error for an unparseable chat id")
 	}
 }

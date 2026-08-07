@@ -1,16 +1,25 @@
+// Package config reads morse's only settings: where to send.
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"time"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
 
+// Environment variables override the file. An agent or a container can then use
+// morse with no config file at all, which is the difference between "install
+// and configure this" and "set two variables".
+const (
+	BotTokenEnv = "MORSE_BOT_TOKEN"
+	ChatIDEnv   = "MORSE_CHAT_ID"
+)
+
 type Config struct {
-	Telegram TelegramConfig        `yaml:"telegram"`
-	Plugins  map[string]PluginConf `yaml:"plugins"`
+	Telegram TelegramConfig `yaml:"telegram"`
 }
 
 type TelegramConfig struct {
@@ -18,97 +27,37 @@ type TelegramConfig struct {
 	ChatID   int64  `yaml:"chat_id"`
 }
 
-// PluginConf holds arbitrary plugin config as raw YAML nodes.
-// Each plugin extracts what it needs.
-type PluginConf struct {
-	Interval string `yaml:"interval"`
-	raw      map[string]any
-}
-
-func (p *PluginConf) UnmarshalYAML(node *yaml.Node) error {
-	// Decode into raw map for plugin-specific access
-	if err := node.Decode(&p.raw); err != nil {
-		return err
-	}
-	// Also extract interval directly
-	if v, ok := p.raw["interval"]; ok {
-		if s, ok := v.(string); ok {
-			p.Interval = s
-		}
-	}
-	return nil
-}
-
-func (p *PluginConf) GetString(key string) string {
-	if v, ok := p.raw[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func (p *PluginConf) GetFloat(key string) float64 {
-	if v, ok := p.raw[key]; ok {
-		switch n := v.(type) {
-		case float64:
-			return n
-		case int:
-			return float64(n)
-		}
-	}
-	return 0
-}
-
-func (p *PluginConf) GetStringSlice(key string) []string {
-	if v, ok := p.raw[key]; ok {
-		if slice, ok := v.([]any); ok {
-			result := make([]string, 0, len(slice))
-			for _, item := range slice {
-				if s, ok := item.(string); ok {
-					result = append(result, s)
-				}
-			}
-			return result
-		}
-	}
-	return nil
-}
-
-func (p *PluginConf) GetDuration(key string) time.Duration {
-	s := p.GetString(key)
-	if s == "" {
-		return 0
-	}
-	d, _ := time.ParseDuration(s)
-	return d
-}
-
-func (p *PluginConf) ParseInterval() time.Duration {
-	if p.Interval == "" {
-		return 5 * time.Minute // default
-	}
-	d, err := time.ParseDuration(p.Interval)
-	if err != nil {
-		return 5 * time.Minute
-	}
-	return d
-}
-
+// Load reads path if it exists, then applies any environment override. A
+// missing file is not an error when the environment supplies both values.
 func Load(path string) (*Config, error) {
+	var cfg Config
+
 	data, err := os.ReadFile(path)
-	if err != nil {
+	switch {
+	case err == nil:
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("parsing config: %w", err)
+		}
+	case !errors.Is(err, os.ErrNotExist):
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing config: %w", err)
+
+	if token := os.Getenv(BotTokenEnv); token != "" {
+		cfg.Telegram.BotToken = token
 	}
+	if raw := os.Getenv(ChatIDEnv); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", ChatIDEnv, err)
+		}
+		cfg.Telegram.ChatID = id
+	}
+
 	if cfg.Telegram.BotToken == "" {
-		return nil, fmt.Errorf("telegram.bot_token is required")
+		return nil, fmt.Errorf("no bot token: set it in %s or %s", path, BotTokenEnv)
 	}
 	if cfg.Telegram.ChatID == 0 {
-		return nil, fmt.Errorf("telegram.chat_id is required")
+		return nil, fmt.Errorf("no chat id: set it in %s or %s", path, ChatIDEnv)
 	}
 	return &cfg, nil
 }

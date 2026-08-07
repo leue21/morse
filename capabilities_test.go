@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"morse/plugin"
+	"morse/config"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -21,16 +21,8 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 func TestCapabilitiesReportsTheSendContract(t *testing.T) {
-	path := writeConfig(t, `
-telegram:
-  bot_token: "tok"
-  chat_id: 42
-plugins:
-  diskspace:
-    interval: "15m"
-    paths: ["/"]
-    min_free_percent: 8.0
-`)
+	path := writeConfig(t, "telegram:\n  bot_token: \"tok\"\n  chat_id: 42\n")
+
 	var out bytes.Buffer
 	if err := cmdCapabilities(path, []string{"--json"}, &out); err != nil {
 		t.Fatal(err)
@@ -39,64 +31,43 @@ plugins:
 	if err := json.Unmarshal(out.Bytes(), &caps); err != nil {
 		t.Fatal(err)
 	}
-	if caps.Name != "morse" {
-		t.Errorf("name = %q", caps.Name)
+	if caps.Name != "morse" || !caps.Delivery.Configured {
+		t.Errorf("got %+v", caps)
 	}
-	if !caps.Delivery.Configured || caps.Delivery.Channel != "telegram" {
-		t.Errorf("delivery = %+v, want a configured telegram channel", caps.Delivery)
-	}
-	// A caller must be able to learn the accepted severities without reading
-	// the source; that is the whole point of the command.
-	if len(caps.Send.Severities) != 3 || caps.Send.Default != "warning" {
-		t.Errorf("send contract = %+v", caps.Send)
+	if !strings.Contains(caps.Send.Usage, "--silent") {
+		t.Errorf("usage does not mention --silent: %q", caps.Send.Usage)
 	}
 	if !caps.Send.BodyStdin {
-		t.Error("send contract does not mention that the body can come from stdin")
+		t.Error("contract omits that the body can come from stdin")
 	}
-	if len(caps.Watching) != 1 || caps.Watching[0].Name != "diskspace" {
-		t.Fatalf("watching = %+v, want the configured plugin", caps.Watching)
+	// The advertised variables must be the ones config actually reads, or a
+	// caller sets something that does nothing.
+	want := []string{config.BotTokenEnv, config.ChatIDEnv}
+	if len(caps.Delivery.Env) != len(want) {
+		t.Fatalf("env = %v, want %v", caps.Delivery.Env, want)
 	}
-	if caps.Watching[0].Interval != "15m0s" {
-		t.Errorf("interval = %q", caps.Watching[0].Interval)
-	}
-}
-
-// Every severity the command advertises must actually be accepted by send.
-// Advertising one that is refused would be worse than not advertising at all.
-func TestCapabilitiesAdvertisesOnlyUsableSeverities(t *testing.T) {
-	path := writeConfig(t, "telegram:\n  bot_token: \"tok\"\n  chat_id: 42\n")
-	var out bytes.Buffer
-	if err := cmdCapabilities(path, []string{"--json"}, &out); err != nil {
-		t.Fatal(err)
-	}
-	var caps Capabilities
-	if err := json.Unmarshal(out.Bytes(), &caps); err != nil {
-		t.Fatal(err)
-	}
-	// The contract is that every advertised name parses.
-	for _, name := range caps.Send.Severities {
-		if _, err := plugin.ParseSeverity(name); err != nil {
-			t.Errorf("advertised severity %q is not accepted: %v", name, err)
+	for i, name := range want {
+		if caps.Delivery.Env[i] != name {
+			t.Errorf("env[%d] = %q, want %q", i, caps.Delivery.Env[i], name)
 		}
 	}
 }
 
-// An installation that is not set up yet must still be able to say what it is
-// and how it would be called — refusing would make the command useless exactly
-// when someone is trying to set it up.
+// An installation that is not set up yet must still say what it is and how it
+// would be called; that is when someone most needs to know.
 func TestCapabilitiesAnswersWithoutAConfig(t *testing.T) {
+	t.Setenv(config.BotTokenEnv, "")
+	t.Setenv(config.ChatIDEnv, "")
+
 	var out bytes.Buffer
 	if err := cmdCapabilities("/nonexistent/config.yaml", nil, &out); err != nil {
 		t.Fatalf("capabilities refused without a config: %v", err)
 	}
 	text := out.String()
-	if !strings.Contains(text, "not loaded") {
-		t.Errorf("output does not explain the missing config: %q", text)
+	if !strings.Contains(text, "not configured") {
+		t.Errorf("output does not report unconfigured delivery: %q", text)
 	}
 	if !strings.Contains(text, "morse send") {
 		t.Error("output omits the send contract, which does not depend on config")
-	}
-	if !strings.Contains(text, "not configured") {
-		t.Error("output does not report that delivery is unconfigured")
 	}
 }
