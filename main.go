@@ -27,11 +27,11 @@ func main() {
 	}
 	defaultConfig := filepath.Join(home, ".config", "morse", "config.yaml")
 
-	// `morse send <text>` posts a single message and exits. systemd OnFailure
-	// handlers need to report a unit that died, which the scheduled plugins
-	// cannot do: by then this process may be the thing that died.
+	// `morse send <title> [body]` posts a single message and exits. systemd
+	// OnFailure handlers need to report a unit that died, which the scheduled
+	// plugins cannot do: by then this process may be the thing that died.
 	if len(os.Args) > 1 && os.Args[1] == "send" {
-		if err := sendOnce(defaultConfig, os.Args[2:]); err != nil {
+		if err := cmdSend(defaultConfig, os.Args[2:]); err != nil {
 			slog.Error("send failed", "error", err)
 			os.Exit(1)
 		}
@@ -134,8 +134,24 @@ func resolveMessage(args []string, stdin io.Reader) (title, body string, err err
 	return title, body, nil
 }
 
+// cmdSend parses the flags of the send subcommand and posts one message.
+func cmdSend(defaultConfig string, args []string) error {
+	fs := flag.NewFlagSet("send", flag.ExitOnError)
+	configPath := fs.String("config", defaultConfig, "path to config file")
+	severity := fs.String("severity", string(plugin.SeverityWarning),
+		"info (arrives silently), warning, or critical")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	level, err := plugin.ParseSeverity(*severity)
+	if err != nil {
+		return err
+	}
+	return sendOnce(*configPath, fs.Args(), level)
+}
+
 // sendOnce posts one message using the configured Telegram credentials.
-func sendOnce(configPath string, args []string) error {
+func sendOnce(configPath string, args []string, severity plugin.Severity) error {
 	title, body, err := resolveMessage(args, os.Stdin)
 	if err != nil {
 		return err
@@ -144,5 +160,5 @@ func sendOnce(configPath string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	return notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID).Send(title, body)
+	return notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID).Send(title, body, severity)
 }

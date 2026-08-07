@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"morse/plugin"
 )
 
 // Notifier sends alert messages.
 type Notifier interface {
-	Send(title, message string) error
+	Send(title, message string, severity plugin.Severity) error
 }
 
 // Telegram sends messages via the Telegram Bot API.
@@ -33,13 +35,17 @@ func NewTelegram(botToken string, chatID int64) *Telegram {
 	}
 }
 
-func (t *Telegram) Send(title, message string) error {
+// Send delivers one message. Severity decides whether it buzzes: info arrives
+// silently, so routine facts can be reported without training the reader to
+// mute the chat, which would cost the alerts that matter.
+func (t *Telegram) Send(title, message string, severity plugin.Severity) error {
 	text := fmt.Sprintf("*%s*\n%s", escapeMarkdown(title), escapeMarkdown(message))
 
 	payload := map[string]any{
-		"chat_id":    t.chatID,
-		"text":       text,
-		"parse_mode": "MarkdownV2",
+		"chat_id":              t.chatID,
+		"text":                 text,
+		"parse_mode":           "MarkdownV2",
+		"disable_notification": severity == plugin.SeverityInfo,
 	}
 
 	body, err := json.Marshal(payload)

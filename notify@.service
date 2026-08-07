@@ -10,6 +10,6 @@ Type=oneshot
 # every alert without its diagnostic.
 # The excerpt arrives on stdin, which `morse send` uses as the body, so the
 # message says what broke rather than only that something did.
-ExecStart=/bin/sh -c 'journalctl --user-unit=%i -n 15 --no-pager --output=cat | %h/.local/bin/morse send "Unit failed: %i"'
+ExecStart=/bin/sh -c 'journalctl --user-unit=%i -n 15 --no-pager --output=cat | %h/.local/bin/morse send --severity critical "Unit failed: %i"'
 # Never let a failing notifier become a second thing to chase.
 TimeoutStartSec=30

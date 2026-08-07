@@ -36,15 +36,20 @@ func (m *mockPlugin) calls() int {
 }
 
 // mockNotifier records all messages sent.
-type mockNotifier struct {
-	mu       sync.Mutex
-	messages []struct{ title, message string }
+type sentMessage struct {
+	title, message string
+	severity       plugin.Severity
 }
 
-func (m *mockNotifier) Send(title, message string) error {
+type mockNotifier struct {
+	mu       sync.Mutex
+	messages []sentMessage
+}
+
+func (m *mockNotifier) Send(title, message string, severity plugin.Severity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.messages = append(m.messages, struct{ title, message string }{title, message})
+	m.messages = append(m.messages, sentMessage{title, message, severity})
 	return nil
 }
 

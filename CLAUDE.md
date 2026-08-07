@@ -26,7 +26,7 @@ Run a single test:
 ```
 main.go              → wires config, plugins, scheduler, notifier; handles signals
 config/              → YAML parsing; PluginConf provides generic accessors (GetString, GetFloat, GetDuration, etc.)
-plugin/              → Plugin interface (Name, Check, Describe) + implementations (diskspace)
+plugin/              → Plugin interface (Name, Check, Describe), Severity, + implementations (diskspace)
 scheduler/           → runs each plugin in its own goroutine on a time.Ticker, calls Check() immediately then on interval
 notifier/            → Telegram Bot API client (Send + long-poll PollCommands)
 internal/testutil/   → FakeAPI HTTP mock for tests
@@ -46,6 +46,7 @@ Config lives at `~/.config/morse/config.yaml` (override with `-config` flag). Pl
 
 ## Conventions
 
+- Alerts carry a `plugin.Severity`; each channel maps it to its own delivery behaviour (Telegram: `info` sets `disable_notification`)
 - Errors are wrapped with `fmt.Errorf("context: %w", err)` and never fatal in the scheduler (logged and continued)
 - Logging via `log/slog`; per-plugin loggers use `slog.With("plugin", name)`
 - All HTTP calls use `http.NewRequestWithContext(ctx, ...)` for cancellation

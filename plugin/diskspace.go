@@ -81,8 +81,9 @@ func (d *DiskSpace) Check(ctx context.Context) ([]Alert, error) {
 			if d.ready(path, now) {
 				d.last[path] = now
 				alerts = append(alerts, Alert{
-					Title:   "Disk unreadable",
-					Message: fmt.Sprintf("%s could not be checked: %v", path, err),
+					Title:    "Disk unreadable",
+					Message:  fmt.Sprintf("%s could not be checked: %v", path, err),
+					Severity: SeverityWarning,
 				})
 			}
 			continue
@@ -100,6 +101,9 @@ func (d *DiskSpace) Check(ctx context.Context) ([]Alert, error) {
 			Title: "Disk almost full",
 			Message: fmt.Sprintf("%s has %s free of %s (%.1f%%). Recording to a full disk loses the stream.",
 				path, humanBytes(free), humanBytes(total), percent(free, total)),
+			// A filling disk is not yet a broken one: it wants attention today,
+			// not this second.
+			Severity: SeverityWarning,
 		})
 	}
 	return alerts, nil

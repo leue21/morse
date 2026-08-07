@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"morse/internal/testutil"
+	"morse/plugin"
 )
 
 func TestSendSuccess(t *testing.T) {
@@ -23,7 +24,7 @@ func TestSendSuccess(t *testing.T) {
 	tg := NewTelegram("tok123", 42)
 	tg.baseURL = srv.URL()
 
-	err := tg.Send("Test Title", "Hello world")
+	err := tg.Send("Test Title", "Hello world", plugin.SeverityWarning)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +59,7 @@ func TestSendAPIError(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	err := tg.Send("Title", "Msg")
+	err := tg.Send("Title", "Msg", plugin.SeverityWarning)
 	if err == nil {
 		t.Fatal("expected error for 400 response")
 	}
@@ -68,7 +69,7 @@ func TestSendNetworkError(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = "http://127.0.0.1:1" // nothing listening
 
-	err := tg.Send("Title", "Msg")
+	err := tg.Send("Title", "Msg", plugin.SeverityWarning)
 	if err == nil {
 		t.Fatal("expected error for unreachable server")
 	}
@@ -242,4 +243,39 @@ func (l *lockedBuffer) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.buf.String()
+}
+
+// Severity decides whether the message buzzes. Getting this backwards is
+// invisible in the chat — the message still arrives — so it is pinned here.
+func TestSendMapsSeverityToNotificationBehaviour(t *testing.T) {
+	for _, tc := range []struct {
+		severity   plugin.Severity
+		wantSilent bool
+	}{
+		{plugin.SeverityInfo, true},
+		{plugin.SeverityWarning, false},
+		{plugin.SeverityCritical, false},
+	} {
+		t.Run(string(tc.severity), func(t *testing.T) {
+			srv := testutil.NewFakeAPI(t).
+				Handle("POST", "/bottok/sendMessage", 200, `{"ok":true}`).
+				Start()
+			tg := NewTelegram("tok", 42)
+			tg.baseURL = srv.URL()
+
+			if err := tg.Send("Title", "Body", tc.severity); err != nil {
+				t.Fatal(err)
+			}
+			if len(srv.Requests) != 1 {
+				t.Fatalf("got %d requests, want 1", len(srv.Requests))
+			}
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(srv.Requests[0].Body), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if got := payload["disable_notification"]; got != tc.wantSilent {
+				t.Errorf("disable_notification = %v, want %v", got, tc.wantSilent)
+			}
+		})
+	}
 }
