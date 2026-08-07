@@ -85,6 +85,9 @@ func TestDiskSpaceReportsUnreadablePaths(t *testing.T) {
 func TestDiskSpaceDescribeShowsEveryPath(t *testing.T) {
 	d := fakeDisk(t, 250, 1000, 10, 0, 0)
 	got := d.Describe()
+	if strings.Contains(got, "disk space") {
+		t.Errorf("Describe() repeats the plugin name: %q", got)
+	}
 	if !strings.Contains(got, "/data") || !strings.Contains(got, "250 GB") {
 		t.Errorf("Describe() = %q", got)
 	}

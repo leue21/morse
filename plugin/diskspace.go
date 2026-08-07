@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -59,12 +60,9 @@ func (d *DiskSpace) Describe() string {
 		b = append(b, fmt.Sprintf("%s: %s free of %s (%.0f%%)",
 			path, humanBytes(free), humanBytes(total), percent(free, total)))
 	}
+	// No name header: every caller already prints the plugin name above this.
 	sort.Strings(b)
-	out := "disk space\n"
-	for _, line := range b {
-		out += "  " + line + "\n"
-	}
-	return out
+	return strings.Join(b, "\n")
 }
 
 func (d *DiskSpace) Check(ctx context.Context) ([]Alert, error) {

@@ -24,7 +24,8 @@ Run a single test:
 **morse** is a plugin-based Telegram alerting daemon for this host: it watches things on a schedule and reports what it finds, and `morse send` posts one-off messages for systemd OnFailure handlers. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is stdlib).
 
 ```
-main.go              → wires config, plugins, scheduler, notifier; handles signals
+main.go              → subcommand dispatch (send, capabilities); wires config, plugins, scheduler, notifier
+capabilities.go      → `morse capabilities`: the callable interface, as text or JSON
 config/              → YAML parsing; PluginConf provides generic accessors (GetString, GetFloat, GetDuration, etc.)
 plugin/              → Plugin interface (Name, Check, Describe), Severity, + implementations (diskspace)
 scheduler/           → runs each plugin in its own goroutine on a time.Ticker, calls Check() immediately then on interval

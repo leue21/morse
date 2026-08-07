@@ -65,6 +65,22 @@ one.
 
 Its alerts are `warning`: a filling disk wants attention today, not this second.
 
+## Asking what morse can do
+
+```sh
+morse capabilities          # human readable
+morse capabilities --json   # for a caller
+```
+
+Reports the revision it was built from, whether delivery is configured, the
+exact `send` usage with the severities it accepts, and what is currently being
+watched with each plugin's present reading. A service that has to learn morse's
+interface by reading this source is coupled to it; one that can ask is not.
+
+It answers even when the config is missing or invalid — "what is this and how
+would I call it" is a fair question to ask of an installation that is not set
+up yet.
+
 ## Reporting a failed service
 
 `morse send <title> [body]` posts a single message and exits. With no body it

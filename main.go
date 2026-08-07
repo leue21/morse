@@ -27,15 +27,26 @@ func main() {
 	}
 	defaultConfig := filepath.Join(home, ".config", "morse", "config.yaml")
 
-	// `morse send <title> [body]` posts a single message and exits. systemd
-	// OnFailure handlers need to report a unit that died, which the scheduled
-	// plugins cannot do: by then this process may be the thing that died.
-	if len(os.Args) > 1 && os.Args[1] == "send" {
-		if err := cmdSend(defaultConfig, os.Args[2:]); err != nil {
-			slog.Error("send failed", "error", err)
-			os.Exit(1)
+	// Subcommands run and exit; with none, morse starts the daemon.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		// `morse send <title> [body]` posts a single message. systemd
+		// OnFailure handlers need to report a unit that died, which the
+		// scheduled plugins cannot do: by then this process may be the thing
+		// that died.
+		case "send":
+			if err := cmdSend(defaultConfig, os.Args[2:]); err != nil {
+				slog.Error("send failed", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "capabilities":
+			if err := cmdCapabilities(defaultConfig, os.Args[2:], os.Stdout); err != nil {
+				slog.Error("capabilities failed", "error", err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 
 	configPath := flag.String("config", defaultConfig, "path to config file")
