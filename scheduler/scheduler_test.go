@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"salert/plugin"
+	"morse/plugin"
 )
 
 // mockPlugin records how many times Check was called and returns configured alerts/errors.

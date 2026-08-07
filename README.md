@@ -1,4 +1,4 @@
-# salert
+# morse
 
 Plugin-based Telegram notification service. Monitors external APIs on a schedule and sends Telegram messages when conditions are met. Designed for Raspberry Pi (ARM64) — minimal dependencies, low resource usage.
 
@@ -12,7 +12,7 @@ make build
 sudo make install
 
 # Edit config with your Telegram credentials
-sudo vim /etc/salert/config.yaml
+sudo vim /etc/morse/config.yaml
 
 # Enable and start
 sudo make enable
@@ -61,7 +61,7 @@ Monitors Bitcoin price via the CoinGecko free API. Alerts when the price crosses
 
 Monitors your TooGoodToGo favorites for available surprise bags. Uses the TGTG API with email-based OTP authentication.
 
-**First run:** salert will request a login link via email. Click the link in the TGTG email to authenticate. Tokens are saved to `tgtg_tokens.json` next to the config file so subsequent restarts don't require re-authentication.
+**First run:** morse will request a login link via email. Click the link in the TGTG email to authenticate. Tokens are saved to `tgtg_tokens.json` next to the config file so subsequent restarts don't require re-authentication.
 
 **How it works:**
 - Fetches your favorited stores from the TGTG app
@@ -128,14 +128,14 @@ plugins:
 
 ```bash
 make build              # compile binary
-sudo make install       # install binary, config, service file, create salert user
+sudo make install       # install binary, config, service file, create morse user
 ```
 
 This installs:
-- `/usr/local/bin/salert` — binary
-- `/etc/salert/config.yaml` — config (not overwritten on reinstall)
-- `/etc/systemd/system/salert.service` — systemd unit
-- `salert` system user (no login shell)
+- `/usr/local/bin/morse` — binary
+- `/etc/morse/config.yaml` — config (not overwritten on reinstall)
+- `/etc/systemd/system/morse.service` — systemd unit
+- `morse` system user (no login shell)
 
 ### Uninstall
 
@@ -143,7 +143,7 @@ This installs:
 sudo make uninstall     # stop, disable, remove binary + service file
 ```
 
-Config is preserved at `/etc/salert/` — remove manually if no longer needed.
+Config is preserved at `/etc/morse/` — remove manually if no longer needed.
 
 ### Upgrade
 
@@ -166,9 +166,9 @@ make logs               # follow journal logs (ctrl-c to stop)
 Or use systemctl/journalctl directly:
 
 ```bash
-sudo systemctl status salert
-journalctl -u salert -f
-journalctl -u salert --since "1 hour ago"
+sudo systemctl status morse
+journalctl -u morse -f
+journalctl -u morse --since "1 hour ago"
 ```
 
 ## Makefile Targets
@@ -192,7 +192,7 @@ journalctl -u salert --since "1 hour ago"
 ```
 ├── main.go              # Entry point, plugin wiring, signal handling
 ├── Makefile             # Build, install, service management
-├── salert.service       # systemd unit file
+├── morse.service       # systemd unit file
 ├── config.yaml          # Example configuration
 ├── config/
 │   └── config.go        # YAML config structs + loader
@@ -222,11 +222,11 @@ go test ./... -coverprofile=c.out && go tool cover -html=c.out  # HTML report
 ## Security
 
 The systemd service runs with hardened settings:
-- Dedicated `salert` system user (no login shell)
+- Dedicated `morse` system user (no login shell)
 - `NoNewPrivileges=true` — cannot gain additional privileges
 - `ProtectSystem=strict` — filesystem is read-only except explicit paths
 - `ProtectHome=true` — no access to home directories
-- Config file is `0640 root:salert` — only root can edit, service can read
+- Config file is `0640 root:morse` — only root can edit, service can read
 
 ## License
 

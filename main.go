@@ -13,10 +13,10 @@ import (
 	"strings"
 	"syscall"
 
-	"salert/config"
-	"salert/notifier"
-	"salert/plugin"
-	"salert/scheduler"
+	"morse/config"
+	"morse/notifier"
+	"morse/plugin"
+	"morse/scheduler"
 )
 
 func main() {
@@ -25,9 +25,9 @@ func main() {
 		slog.Error("failed to get home directory", "error", err)
 		os.Exit(1)
 	}
-	defaultConfig := filepath.Join(home, ".config", "salert", "config.yaml")
+	defaultConfig := filepath.Join(home, ".config", "morse", "config.yaml")
 
-	// `salert send <text>` posts a single message and exits. systemd OnFailure
+	// `morse send <text>` posts a single message and exits. systemd OnFailure
 	// handlers need to report a unit that died, which the scheduled plugins
 	// cannot do: by then this process may be the thing that died.
 	if len(os.Args) > 1 && os.Args[1] == "send" {
@@ -72,9 +72,9 @@ func main() {
 		}
 	}
 
-	slog.Info("salert starting")
+	slog.Info("morse starting")
 	sched.Run(ctx)
-	slog.Info("salert stopped")
+	slog.Info("morse stopped")
 }
 
 func buildCommandHandler(sched *scheduler.Scheduler, plugins []plugin.Plugin) notifier.CommandHandler {
@@ -168,11 +168,11 @@ func buildPlugins(cfg *config.Config, sched *scheduler.Scheduler, dataDir string
 	return plugins
 }
 
-// resolveMessage works out what a `salert send` invocation should report.
+// resolveMessage works out what a `morse send` invocation should report.
 // Text after the title becomes the body; with no body arguments it is read from
 // stdin, so a caller can pipe in a journal excerpt.
 func resolveMessage(args []string, stdin io.Reader) (title, body string, err error) {
-	title = "salert"
+	title = "morse"
 	titled := false
 	if len(args) > 0 {
 		title, args, titled = args[0], args[1:], true

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"salert/internal/testutil"
+	"morse/internal/testutil"
 )
 
 // favoritesJSON builds a TGTG /item/v8/ response with the given items.

@@ -1,4 +1,4 @@
-module salert
+module morse
 
 go 1.25.7
 
