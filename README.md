@@ -63,16 +63,23 @@ one.
 | `min_free_gb` | float | Alert below this many GB free (0 to disable) |
 | `cooldown` | duration | Min time between alerts per path (0 to disable) |
 
+Its alerts are `warning`: a filling disk wants attention today, not this second.
+
 ## Reporting a failed service
 
 `morse send <title> [body]` posts a single message and exits. With no body it
 reads stdin, so a systemd `OnFailure=` handler can pipe in the failed unit's
-journal:
+journal.
+
+`--severity` says how much the reader should care. `info` arrives silently —
+the message is in the chat but does not buzz — while `warning` (the default)
+and `critical` notify. Routine facts should be `info`: a monitor that
+interrupts you for everything gets muted, which costs the alerts that matter.
 
 ```ini
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'journalctl --user-unit=%i -n 15 --no-pager --output=cat | %h/.local/bin/morse send "Unit failed: %i"'
+ExecStart=/bin/sh -c 'journalctl --user-unit=%i -n 15 --no-pager --output=cat | %h/.local/bin/morse send --severity critical "Unit failed: %i"'
 ```
 
 `notify@.service` in this repository does exactly that. Point a unit at it with

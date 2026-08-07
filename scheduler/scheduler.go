@@ -80,7 +80,7 @@ func (s *Scheduler) check(ctx context.Context, p plugin.Plugin, log *slog.Logger
 
 	for _, alert := range alerts {
 		log.Info("sending alert", "title", alert.Title)
-		if err := s.notifier.Send(alert.Title, alert.Message); err != nil {
+		if err := s.notifier.Send(alert.Title, alert.Message, alert.Severity); err != nil {
 			log.Error("failed to send alert", "title", alert.Title, "error", err)
 		}
 	}
