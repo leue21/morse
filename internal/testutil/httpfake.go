@@ -8,10 +8,13 @@ import (
 	"testing"
 )
 
-// Request records a request received by FakeAPI.
+// Request records a request received by FakeAPI. The headers come along
+// because the body alone is not always readable without them: a multipart
+// upload can only be parsed with the boundary from its Content-Type.
 type Request struct {
 	Method string
 	Path   string
+	Header http.Header
 	Body   []byte
 }
 
@@ -57,7 +60,9 @@ func (f *FakeAPI) Start() *FakeAPI {
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
-		f.Requests = append(f.Requests, Request{Method: r.Method, Path: r.URL.Path, Body: body})
+		f.Requests = append(f.Requests, Request{
+			Method: r.Method, Path: r.URL.Path, Header: r.Header.Clone(), Body: body,
+		})
 		f.mu.Unlock()
 
 		for _, rt := range f.routes {

@@ -6,6 +6,7 @@ Send a notification to Telegram from the command line.
 morse send "Backup failed" "rsync exit 23"
 echo "$logs" | morse send "Build failed on main"
 morse send --silent "Backup finished" "412 files, 3m21s"
+morse send --file report.pdf "Nightly report"
 ```
 
 morse sends one message and exits. Anything that wants to be told something
@@ -50,8 +51,8 @@ matters for anything running in a container or under an agent.
 ## Usage
 
 ```
-morse send [--silent] <title> [body]   send a message
-morse capabilities [--json]            what morse accepts, for a caller
+morse send [--silent] [--file path] <title> [body]   send a message
+morse capabilities [--json]                          what morse accepts
 morse help
 ```
 
@@ -62,6 +63,25 @@ after it would otherwise end up in the message body.
 With no body argument the body is read from stdin when something is piped in,
 so a caller can pass a log excerpt that way. A title on its own still sends: a
 job that died without logging is exactly the case worth hearing about.
+
+## Sending a file
+
+```sh
+morse send --file coverage.html "Coverage report" "78.4%, up from 71"
+morse send --file /var/log/nightly.log --silent "Nightly finished"
+morse send --file backup.tar.gz
+```
+
+The title and body become the file's caption, so a document arrives explained
+rather than as an unlabelled attachment. With neither, the file goes out with no
+caption at all — a filename is often the whole message, and an empty caption
+would only add an empty bold line above it.
+
+A caption holds 1024 characters against a message's 4096, and morse trims to fit
+rather than letting the API reject the delivery: the body gives way first, since
+the title is what gets read on a lock screen. Telegram accepts uploads up to
+50 MB, and morse checks the size before the first byte goes up the wire, so an
+oversized file fails immediately instead of after the whole transfer.
 
 `--silent` delivers without a notification sound. The message still arrives and
 stays in the chat — it just does not buzz, so routine facts can be reported

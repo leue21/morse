@@ -30,7 +30,7 @@ stdlib).
 main.go              → subcommand dispatch (send, capabilities, help) and the send command
 capabilities.go      → `morse capabilities`: the callable interface, as text or JSON
 config/              → telegram credentials, from the file or MORSE_BOT_TOKEN / MORSE_CHAT_ID
-notifier/            → Telegram Bot API client (Send)
+notifier/            → Telegram Bot API client (Send, SendDocument)
 internal/testutil/   → FakeAPI HTTP mock for tests
 ```
 
@@ -47,6 +47,9 @@ there is something worth reporting, and morse only has to say it.
   `ContinueOnError` with their output discarded
 - Errors must never carry the bot token: it lives in the request URL, and a
   transport error stringifies that URL. `notifier.withoutURL` strips it
+- Text is trimmed to Telegram's limits (4096 for a message, 1024 for a file
+  caption) rather than sent whole and rejected; the body gives way before the
+  title, and the cut happens before escaping so it cannot land inside an `&amp;`
 - Messages go out as Telegram HTML, escaped with stdlib `html.EscapeString`.
   MarkdownV2 reserves twenty-odd characters and one missed escape makes the API
   reject the message, losing the alert; HTML reserves three, and stdlib owns them

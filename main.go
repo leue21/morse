@@ -64,8 +64,9 @@ func usage(out io.Writer) {
 	fmt.Fprint(out, `morse — send a notification to Telegram
 
 usage:
-  morse send [--silent] <title> [body]   send a message; body may come from stdin
-  morse capabilities [--json]            what morse accepts, for a caller
+  morse send [--silent] [--file path] <title> [body]
+                              send a message; body may come from stdin
+  morse capabilities [--json] what morse accepts, for a caller
   morse help
 
 Credentials come from ~/.config/morse/config.yaml, or from the environment:
@@ -79,10 +80,13 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string) error {
 	fs.SetOutput(io.Discard) // the error is returned and reported once, by main
 	configPath := fs.String("config", defaultConfig, "path to config file")
 	silent := fs.Bool("silent", false, "deliver without a notification sound")
+	file := fs.String("file", "", "upload this file, with the title and body as its caption")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	title, body, err := resolveMessage(fs.Args(), pipedStdin(os.Stdin))
+	// A file is something to send in its own right, so a bare `morse send
+	// --file report.pdf` is a complete instruction and needs no title.
+	title, body, err := resolveMessage(fs.Args(), pipedStdin(os.Stdin), *file != "")
 	if err != nil {
 		return err
 	}
@@ -90,7 +94,11 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string) error {
 	if err != nil {
 		return err
 	}
-	return notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID).Send(ctx, title, body, *silent)
+	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
+	if *file != "" {
+		return tg.SendDocument(ctx, *file, title, body, *silent)
+	}
+	return tg.Send(ctx, title, body, *silent)
 }
 
 // pipedStdin returns f only when something is actually piped into it. Reading a
@@ -108,7 +116,10 @@ func pipedStdin(f *os.File) io.Reader {
 // resolveMessage works out what a send invocation should report. Text after the
 // title becomes the body; with no body arguments it is read from stdin (when
 // anything is piped in), so a caller can pass a log excerpt that way.
-func resolveMessage(args []string, stdin io.Reader) (title, body string, err error) {
+//
+// haveFile says the invocation already carries something worth delivering, so
+// empty text is not an empty send.
+func resolveMessage(args []string, stdin io.Reader, haveFile bool) (title, body string, err error) {
 	title = "morse"
 	titled := false
 	if len(args) > 0 {
@@ -131,6 +142,14 @@ func resolveMessage(args []string, stdin io.Reader) (title, body string, err err
 		body = strings.TrimSpace(string(piped))
 	}
 	if body == "" {
+		if haveFile {
+			// The file speaks for itself; captioning it "(no details)" would
+			// say less than saying nothing.
+			if !titled {
+				title = ""
+			}
+			return title, "", nil
+		}
 		if !titled {
 			return "", "", errors.New("nothing to send")
 		}

@@ -15,6 +15,7 @@ morse send "Backup failed" "rsync exit 23"       # title + body
 morse send "Deploy finished"                     # title only; body becomes "(no details)"
 morse send --silent "Nightly job ok" "412 files" # delivers without a sound
 tail -n 30 build.log | morse send "Build failed"  # body from stdin
+morse send --file report.pdf "Nightly report"    # upload a file
 ```
 
 Rules that will bite you otherwise:
@@ -26,6 +27,10 @@ Rules that will bite you otherwise:
 - With no body argument *and* no pipe, a titled send still goes out.
 - Message text is sent as Telegram HTML and escaped for you — do not
   pre-escape, and do not expect Markdown to render.
+- `--file <path>` uploads that file, with the title and body as its caption.
+  A caption holds 1024 characters (a message holds 4096) and morse trims the
+  body to fit; hand it a path, never file contents. Uploads over 50 MB are
+  refused before anything is sent.
 - Exit status is 0 on delivery, 1 on any failure (bad config, network,
   Telegram rejection), 2 on an unknown command or no arguments. Errors go to
   stderr and never contain the bot token.

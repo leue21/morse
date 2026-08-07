@@ -15,6 +15,7 @@ func TestResolveMessage(t *testing.T) {
 		wantBody   string
 		wantErrStr string
 		noStdin    bool
+		haveFile   bool
 	}{{
 		name: "body from arguments", args: []string{"Disk", "almost", "full"},
 		wantTitle: "Disk", wantBody: "almost full",
@@ -37,6 +38,19 @@ func TestResolveMessage(t *testing.T) {
 	}, {
 		name: "flag after the title", args: []string{"Backup", "--silent"},
 		wantErrStr: "must come before the title",
+	}, {
+		// The file is the delivery; a caption reading "(no details)" would say
+		// less about it than saying nothing at all.
+		name: "a file alone is enough to send", haveFile: true, noStdin: true,
+		wantTitle: "", wantBody: "",
+	}, {
+		name: "a titled file keeps its title", args: []string{"Nightly report"},
+		haveFile: true, noStdin: true,
+		wantTitle: "Nightly report", wantBody: "",
+	}, {
+		name: "a file still takes a piped body", args: []string{"Nightly report"},
+		haveFile: true, stdin: "412 files, 3m21s\n",
+		wantTitle: "Nightly report", wantBody: "412 files, 3m21s",
 	}}
 
 	for _, tc := range tests {
@@ -45,7 +59,7 @@ func TestResolveMessage(t *testing.T) {
 			if !tc.noStdin {
 				stdin = strings.NewReader(tc.stdin)
 			}
-			title, body, err := resolveMessage(tc.args, stdin)
+			title, body, err := resolveMessage(tc.args, stdin, tc.haveFile)
 			if tc.wantErrStr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErrStr) {
 					t.Fatalf("err = %v, want %q", err, tc.wantErrStr)

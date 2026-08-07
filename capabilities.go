@@ -35,6 +35,7 @@ type SendContract struct {
 	Usage     string `json:"usage"`
 	Silent    string `json:"silent"`
 	BodyStdin bool   `json:"body_from_stdin"`
+	File      string `json:"file"`
 }
 
 // cmdCapabilities reports the interface. It answers even when the config is
@@ -59,9 +60,10 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			Env:     []string{config.BotTokenEnv, config.ChatIDEnv},
 		},
 		Send: SendContract{
-			Usage:     "morse send [--silent] <title> [body]",
+			Usage:     "morse send [--silent] [--file path] <title> [body]",
 			Silent:    "--silent delivers without a notification sound; the message still arrives",
 			BodyStdin: true,
+			File:      "--file uploads that file, with the title and body as its caption; at most 50 MB",
 		},
 	}
 	if _, err := config.Load(*configPath); err != nil {
@@ -85,8 +87,8 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 	if caps.ConfigErr != "" {
 		fmt.Fprintf(out, "          %s\n", caps.ConfigErr)
 	}
-	fmt.Fprintf(out, "env       %s\n\nsend\n  %s\n  %s\n  the body is read from stdin when no body argument is given\n",
-		strings.Join(caps.Delivery.Env, " "), caps.Send.Usage, caps.Send.Silent)
+	fmt.Fprintf(out, "env       %s\n\nsend\n  %s\n  %s\n  %s\n  the body is read from stdin when no body argument is given\n",
+		strings.Join(caps.Delivery.Env, " "), caps.Send.Usage, caps.Send.Silent, caps.Send.File)
 	return nil
 }
 
