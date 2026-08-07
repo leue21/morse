@@ -1,8 +1,8 @@
 class Morse < Formula
   desc "Send a notification to Telegram from the command line"
   homepage "https://github.com/leue21/morse"
-  url "https://github.com/leue21/morse/archive/refs/tags/v0.1.1.tar.gz"
-  sha256 "df47346056f6db3e387698f5d1abf012da09aed1665aa0b7ae3ea5d0dd72b349"
+  url "https://github.com/leue21/morse/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "5b3589ee6d96c86c04ec2ad085bb4769e8cceaccd4d34028a9969db8ea28ca12"
   license "MIT"
   head "https://github.com/leue21/morse.git", branch: "main"
 
