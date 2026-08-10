@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -21,6 +20,7 @@ type Capabilities struct {
 	ConfigErr string       `json:"config_error,omitempty"`
 	Delivery  Delivery     `json:"delivery"`
 	Send      SendContract `json:"send"`
+	Edit      EditContract `json:"edit"`
 }
 
 type Delivery struct {
@@ -37,6 +37,19 @@ type SendContract struct {
 	Silent    string `json:"silent"`
 	BodyStdin bool   `json:"body_from_stdin"`
 	File      string `json:"file"`
+	Track     string `json:"track"`
+	JSON      string `json:"json"`
+}
+
+// EditContract describes `morse edit`, whose whole point is what it does not
+// do: an edit never notifies anyone, so a caller reporting the state of
+// something long-running can say it as often as it likes.
+type EditContract struct {
+	Usage  string `json:"usage"`
+	Track  string `json:"track"`
+	JSON   string `json:"json"`
+	Silent string `json:"silent"`
+	State  string `json:"state"`
 }
 
 // cmdCapabilities reports the interface. It answers even when the config is
@@ -66,6 +79,15 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			Silent:    "--silent delivers without a notification sound; the message still arrives",
 			BodyStdin: true,
 			File:      "--file uploads that file, with the title and body as its caption; at most 50 MB",
+			Track:     "--track <label> keeps one message current under that label: sent the first time, rewritten in place every time after, so a caller makes the same call whether or not it has reported before. Rewrites never notify",
+			JSON:      "--json prints the message id as JSON, for a caller that would rather hold the id itself than use a label",
+		},
+		Edit: EditContract{
+			Usage:  "morse edit <message_id> <title> [body]  |  morse edit --track <label> <title> [body]",
+			Track:  "--track <label> names the message morse remembered under that label, and fails if there is none; `morse send --track <label>` sends or rewrites without caring which, and is what a caller reporting repeatedly should use",
+			JSON:   "--json prints the id of the message that now carries the text, which differs from the one edited when a gone message was replaced",
+			Silent: "an edit never notifies anyone — that is the API's behaviour, not a flag — so there is no --silent to pass and nothing arrives on a lock screen",
+			State:  "labels live in $XDG_STATE_HOME/morse (else ~/.local/state/morse); they record what morse last sent, not anything Telegram reports back",
 		},
 	}
 	if _, err := config.Load(*configPath); err != nil {
@@ -75,9 +97,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 	}
 
 	if *asJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(caps)
+		return writeJSON(out, caps)
 	}
 
 	state := "not configured"
@@ -89,8 +109,25 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 	if caps.ConfigErr != "" {
 		fmt.Fprintf(out, "          %s\n", caps.ConfigErr)
 	}
-	fmt.Fprintf(out, "env       %s\n\nsend\n  %s\n  %s\n  %s\n  %s\n  the body is read from stdin when no body argument is given\n",
-		strings.Join(caps.Delivery.Env, " "), caps.Send.Usage, caps.Send.Named, caps.Send.Silent, caps.Send.File)
+	fmt.Fprintf(out, "env       %s\n", strings.Join(caps.Delivery.Env, " "))
+
+	// A command is a heading and its lines, so it is written that way: adding
+	// one line to a contract is adding one line here, rather than a format verb
+	// that has to stay in step with an argument three lines further along.
+	for _, command := range []struct {
+		name  string
+		lines []string
+	}{
+		{"send", []string{caps.Send.Usage, caps.Send.Named, caps.Send.Silent, caps.Send.File,
+			caps.Send.Track, caps.Send.JSON,
+			"the body is read from stdin when no body argument is given"}},
+		{"edit", []string{caps.Edit.Usage, caps.Edit.Track, caps.Edit.JSON, caps.Edit.Silent, caps.Edit.State}},
+	} {
+		fmt.Fprintf(out, "\n%s\n", command.name)
+		for _, line := range command.lines {
+			fmt.Fprintf(out, "  %s\n", line)
+		}
+	}
 	return nil
 }
 

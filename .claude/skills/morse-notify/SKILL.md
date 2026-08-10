@@ -35,6 +35,38 @@ Rules that will bite you otherwise:
   Telegram rejection), 2 on an unknown command or no arguments. Errors go to
   stderr and never contain the bot token.
 
+## Updating instead of sending again
+
+When something long-running reports repeatedly — progress, a job's state, a
+queue draining — keep one message current rather than adding a line to the chat
+each time:
+
+```sh
+morse send --track backup --silent "Backup" "0%"   # the same call
+morse send --track backup --silent "Backup" "40%"  # every time
+morse send --track backup --silent "Backup" "done — 3m21s"
+```
+
+- `--track <label>` makes the label stand for one line in the chat: sent the
+  first time, rewritten in place after. **Make the same call every time** — do
+  not branch on whether you have reported before, that is the point of it.
+- **A rewrite never notifies anyone.** That is the Bot API's behaviour, not a
+  flag. Only the first send can make a sound, so pass `--silent` there too if
+  even that is unwanted.
+- If the tracked message was deleted, the next `send --track` starts a new one
+  and repoints the label.
+- `morse edit --track <label>` rewrites but *fails* if the label means nothing
+  yet — use it interactively, where a typo should say so; use `send --track` in
+  a script. `morse edit <id>` means that one message and never replaces it.
+- A tracked `--file` send is a new message each time; uploads cannot be
+  rewritten in place.
+- `morse send --json` prints the message id, for a caller that would rather
+  hold it than use a label: `id=$(morse send --json "Backup" "0%" | jq .message_id)`.
+- morse cannot tell you what a message currently says or whether it was read —
+  the Bot API has no way to ask. The label file is morse's own record of what
+  it last sent.
+- `--file` cannot be edited.
+
 ## Before sending: is it configured?
 
 ```sh
@@ -61,7 +93,8 @@ variables is the whole setup — never print or echo the token.
   gets read on a lock screen; bodies are for the log tail, the exit code, the
   diff stat.
 - Send once per event. A loop that notifies per iteration is a job that should
-  decide first and speak once.
+  decide first and speak once — or one that should `send --track` every time,
+  so the chat keeps one current line instead of a history.
 
 ## Do not
 
