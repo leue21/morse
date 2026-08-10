@@ -82,7 +82,7 @@ usage:
                               remember the message under a label, or print its id
   morse edit <message_id> <title> [body]
                               rewrite a message already in the chat; never notifies
-  morse edit --track <label> <title> [body]
+  morse edit --track <label> [--json] <title> [body]
                               the same, by label rather than by id
   morse capabilities [--json] what morse accepts, for a caller
   morse version
@@ -93,28 +93,84 @@ Credentials come from ~/.config/morse/config.yaml, or from the environment:
 `)
 }
 
+// messageFlags are the flags every command that carries a message takes: where
+// to read credentials, what to say, and what to do with the message afterwards.
+// Declaring them once keeps send and edit from drifting apart, which they can
+// only do in the direction of a caller finding a flag on one and not the other.
+type messageFlags struct {
+	fs         *flag.FlagSet
+	configPath *string
+	titleFlag  *string
+	bodyFlag   *string
+	label      *string
+	asJSON     *bool
+}
+
+// newMessageFlags starts a command's flag set with the shared flags on it. The
+// caller adds whatever else it takes before parsing.
+func newMessageFlags(name, defaultConfig, trackUsage string) *messageFlags {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // the error is returned and reported once, by main
+	return &messageFlags{
+		fs:         fs,
+		configPath: fs.String("config", defaultConfig, "path to config file"),
+		titleFlag:  fs.String("title", "", "the title, instead of the first argument"),
+		bodyFlag:   fs.String("body", "", "the body, instead of the remaining arguments"),
+		label:      fs.String("track", "", trackUsage),
+		asJSON:     fs.Bool("json", false, "print the message id, and what it was sent as, as JSON"),
+	}
+}
+
+// message works out what to say, from the arguments left after parsing. haveFile
+// says the invocation already carries something worth delivering, so empty text
+// is not an empty send.
+func (f *messageFlags) message(args []string, haveFile bool) (title, body string, err error) {
+	return resolveMessage(args, pipedStdin(os.Stdin), haveFile,
+		given(f.fs, "title", f.titleFlag), given(f.fs, "body", f.bodyFlag))
+}
+
+// done finishes a command once the message is delivered: it records the label,
+// if one was given, and prints the result, if that was asked for.
+//
+// The message has gone out by the time any of this runs, so a failure here is
+// reported as what it is — the bookkeeping failed — rather than as a message
+// that was never sent.
+func (f *messageFlags) done(out io.Writer, messageID, chatID int64, title, body string) error {
+	if *f.label != "" {
+		if messageID == 0 {
+			// Writing the label down anyway would point it at nothing, and the
+			// failure would surface later as an edit that cannot be explained.
+			return fmt.Errorf("message delivered, but telegram did not report its id; --track %s not recorded", *f.label)
+		}
+		if err := remember(*f.label, messageID, chatID, title, body); err != nil {
+			return err
+		}
+	}
+	if *f.asJSON {
+		return writeJSON(out, struct {
+			MessageID int64  `json:"message_id"`
+			ChatID    int64  `json:"chat_id"`
+			Track     string `json:"track,omitempty"`
+		}{messageID, chatID, *f.label})
+	}
+	return nil
+}
+
 // cmdSend parses the send flags and posts one message.
 func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("send", flag.ContinueOnError)
-	fs.SetOutput(io.Discard) // the error is returned and reported once, by main
-	configPath := fs.String("config", defaultConfig, "path to config file")
-	silent := fs.Bool("silent", false, "deliver without a notification sound")
-	file := fs.String("file", "", "upload this file, with the title and body as its caption")
-	titleFlag := fs.String("title", "", "the title, instead of the first argument")
-	bodyFlag := fs.String("body", "", "the body, instead of the remaining arguments")
-	label := fs.String("track", "", "remember this message under a label, for a later edit")
-	asJSON := fs.Bool("json", false, "print what was sent, including the message id, as JSON")
-	if err := fs.Parse(args); err != nil {
+	f := newMessageFlags("send", defaultConfig, "remember this message under a label, for a later edit")
+	silent := f.fs.Bool("silent", false, "deliver without a notification sound")
+	file := f.fs.String("file", "", "upload this file, with the title and body as its caption")
+	if err := f.fs.Parse(args); err != nil {
 		return err
 	}
 	// A file is something to send in its own right, so a bare `morse send
 	// --file report.pdf` is a complete instruction and needs no title.
-	title, body, err := resolveMessage(fs.Args(), pipedStdin(os.Stdin), *file != "",
-		given(fs, "title", titleFlag), given(fs, "body", bodyFlag))
+	title, body, err := f.message(f.fs.Args(), *file != "")
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(*f.configPath)
 	if err != nil {
 		return err
 	}
@@ -129,23 +185,7 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	if err != nil {
 		return err
 	}
-	// The message is delivered either way; what follows is bookkeeping for a
-	// caller that asked for it, and its failure is reported without pretending
-	// the message never went out.
-	if *label != "" {
-		if messageID == 0 {
-			// Writing the label down anyway would point it at nothing, and the
-			// failure would surface later as an edit that cannot be explained.
-			return fmt.Errorf("message sent, but telegram did not report its id; --track %s not recorded", *label)
-		}
-		if err := remember(*label, messageID, cfg.Telegram.ChatID, title, body); err != nil {
-			return err
-		}
-	}
-	if *asJSON {
-		return printJSON(out, messageID, cfg.Telegram.ChatID, *label)
-	}
-	return nil
+	return f.done(out, messageID, cfg.Telegram.ChatID, title, body)
 }
 
 // cmdEdit rewrites a message morse already sent.
@@ -155,57 +195,46 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 // the chat current instead of adding a line every time it has news. There is
 // deliberately no --silent to pass: an edit has no louder form to suppress.
 func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("edit", flag.ContinueOnError)
-	fs.SetOutput(io.Discard) // the error is returned and reported once, by main
-	configPath := fs.String("config", defaultConfig, "path to config file")
-	titleFlag := fs.String("title", "", "the title, instead of the first argument")
-	bodyFlag := fs.String("body", "", "the body, instead of the remaining arguments")
-	label := fs.String("track", "", "the label the message was sent under")
-	asJSON := fs.Bool("json", false, "print what was edited, including the message id, as JSON")
-	if err := fs.Parse(args); err != nil {
+	f := newMessageFlags("edit", defaultConfig, "the label the message was sent under")
+	if err := f.fs.Parse(args); err != nil {
 		return err
 	}
 
-	messageID, rest, err := editTarget(fs.Args(), *label)
+	messageID, rest, err := editTarget(f.fs.Args(), *f.label)
 	if err != nil {
 		return err
 	}
-
-	title, body, err := resolveMessage(rest, pipedStdin(os.Stdin), false,
-		given(fs, "title", titleFlag), given(fs, "body", bodyFlag))
+	title, body, err := f.message(rest, false)
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(*f.configPath)
 	if err != nil {
 		return err
 	}
 	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
 
-	err = tg.Edit(ctx, messageID, title, body)
-
-	// A label names "the message that reports this thing", not one particular
-	// message, so when that message is gone — deleted from the chat, or sent to
-	// a chat the config no longer points at — the honest reading is to start a
-	// new one and point the label at it. Otherwise deleting a single message
-	// would silence the job behind it for good, and the message a reader is
-	// meant to interact with is exactly the one that gets deleted. An explicit
-	// id means *that* message, so there the failure stands.
-	if errors.Is(err, notifier.ErrMessageGone) && *label != "" {
+	switch err = tg.Edit(ctx, messageID, title, body); {
+	case errors.Is(err, notifier.ErrNotModified):
+		// Telegram refuses an edit that would change nothing. Something
+		// reporting an unchanged state is doing exactly what it should, and the
+		// chat already says what it was asked to say.
+		err = nil
+	case errors.Is(err, notifier.ErrMessageGone) && *f.label != "":
+		// A label names "the message that reports this thing", not one
+		// particular message, so when that message is gone — deleted from the
+		// chat, or sent to a chat the config no longer points at — the honest
+		// reading is to start a new one and point the label at it. Otherwise
+		// deleting a single message would silence the job behind it for good,
+		// and the message a reader is meant to interact with is exactly the one
+		// that gets deleted. An explicit id means *that* message, so there the
+		// failure stands.
 		messageID, err = tg.Send(ctx, title, body, true)
 	}
 	if err != nil {
 		return err
 	}
-	if *label != "" && messageID != 0 {
-		if err := remember(*label, messageID, cfg.Telegram.ChatID, title, body); err != nil {
-			return err
-		}
-	}
-	if *asJSON {
-		return printJSON(out, messageID, cfg.Telegram.ChatID, *label)
-	}
-	return nil
+	return f.done(out, messageID, cfg.Telegram.ChatID, title, body)
 }
 
 // editTarget works out which message an edit is about, and what is left over to
@@ -264,17 +293,12 @@ func recall(label string) (*track.Record, error) {
 	return rec, err
 }
 
-// printJSON reports what was sent or edited, for a caller that would rather
-// hold the id itself than have morse remember it.
-func printJSON(out io.Writer, messageID, chatID int64, label string) error {
-	result := struct {
-		MessageID int64  `json:"message_id"`
-		ChatID    int64  `json:"chat_id"`
-		Track     string `json:"track,omitempty"`
-	}{messageID, chatID, label}
+// writeJSON prints what a --json flag asked for, indented so a person reading
+// it in a terminal is as well served as the jq that usually consumes it.
+func writeJSON(out io.Writer, value any) error {
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
-	return enc.Encode(result)
+	return enc.Encode(value)
 }
 
 // pipedStdin returns f only when something is actually piped into it. Reading a

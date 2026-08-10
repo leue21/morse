@@ -78,9 +78,9 @@ func TestEditRewritesTheNamedMessage(t *testing.T) {
 	}
 }
 
-// A caller reporting an unchanged state is doing its job; the chat already says
-// what it was asked to say, so Telegram's refusal is not the caller's problem.
-func TestEditOfUnchangedTextIsNotAFailure(t *testing.T) {
+// Whether an unchanged edit matters is the caller's to decide, so the notifier
+// reports what Telegram objected to rather than ruling on it.
+func TestEditOfUnchangedTextReportsWhy(t *testing.T) {
 	srv := testutil.NewFakeAPI(t).
 		Handle("POST", "/bottok/editMessageText", http.StatusBadRequest,
 			`{"ok":false,"description":"Bad Request: message is not modified"}`).
@@ -89,8 +89,27 @@ func TestEditOfUnchangedTextIsNotAFailure(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	if err := tg.Edit(context.Background(), 7, "Title", "same"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := tg.Edit(context.Background(), 7, "Title", "same")
+	if !errors.Is(err, ErrNotModified) {
+		t.Fatalf("err = %v, want ErrNotModified", err)
+	}
+}
+
+// "can't be edited" is a message that exists but is too old, or not this bot's
+// to change — a real problem to report, not one to paper over by sending a
+// replacement.
+func TestEditOfAnUneditableMessageIsNotMistakenForAMissingOne(t *testing.T) {
+	srv := testutil.NewFakeAPI(t).
+		Handle("POST", "/bottok/editMessageText", http.StatusBadRequest,
+			`{"ok":false,"description":"Bad Request: message can't be edited"}`).
+		Start()
+
+	tg := NewTelegram("tok", 1)
+	tg.baseURL = srv.URL()
+
+	err := tg.Edit(context.Background(), 7, "Title", "Body")
+	if err == nil || errors.Is(err, ErrMessageGone) || errors.Is(err, ErrNotModified) {
+		t.Fatalf("err = %v, want a plain failure", err)
 	}
 }
 

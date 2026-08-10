@@ -52,8 +52,13 @@ whether it was read, so a record only ever says what morse itself last did.
 - `--silent` maps to Telegram's `disable_notification`; the message still arrives
 - An edit never notifies, by API behaviour rather than by flag, so `morse edit`
   takes no `--silent`. Do not add one: it would imply a louder alternative that
-  does not exist. Telegram rejects an edit that changes nothing
-  ("message is not modified"); that is a success, not a failure to report
+  does not exist
+- The Bot API says *why* it refused only in prose, in the description of a 400.
+  `notifier.refusal` is the one place that reads that prose, turning the phrases
+  morse can act on into sentinels (`ErrMessageGone`, `ErrNotModified`); add a
+  case there rather than matching on an error's text somewhere else. `notifier`
+  reports which refusal it was, and `main` decides what to do about it — an
+  unchanged edit is a success, a gone message with a label is re-sent
 - A `--track` label becomes a filename, so it is validated before it is joined
   to a path, and one label is one file — two callers never share a file and so
   need no lock. Writes go through a temp file and a rename, because a truncated

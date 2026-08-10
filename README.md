@@ -86,7 +86,7 @@ morse send [--silent] [--file path] <title> [body]   send a message
 morse send --title <t> --body <b>                    the same, named
 morse send --track <label> [--json] <title> [body]   send, and remember it
 morse edit <message_id> <title> [body]               rewrite a sent message
-morse edit --track <label> <title> [body]            the same, by label
+morse edit --track <label> [--json] <title> [body]   the same, by label
 morse capabilities [--json]                          what morse accepts
 morse version
 morse help
@@ -186,6 +186,13 @@ morse edit "$id" "Backup" "done"
 An explicit id means *that* message, so if it is gone the edit fails rather
 than sending a replacement — only a label stands for "the message that reports
 this thing" rather than one particular message.
+
+`edit --json` prints the id of the message that now carries the text, which is
+a different one than you asked for exactly when a gone message was replaced.
+
+Editing to the text a message already has is not an error: Telegram refuses the
+call, and morse treats that as the success it is — the chat already says what
+it was asked to say.
 
 `--file` is not editable: replacing an uploaded document is a different API
 call, and morse does not make it.

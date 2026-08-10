@@ -116,18 +116,22 @@ func Save(dir string, rec Record) error {
 // directory or name something else: the label comes from a caller's command
 // line, and "../../.ssh/config" is a path, not a name.
 func pathFor(dir, label string) (string, error) {
-	switch {
-	case label == "":
+	if label == "" {
 		return "", errors.New("empty label")
-	case strings.ContainsAny(label, `/\`), strings.HasPrefix(label, "."):
-		return "", fmt.Errorf("label %q: use letters, digits, - and _", label)
 	}
+	// The allowlist below already refuses a separator, so what is left to rule
+	// out by hand is a leading dot: "." and ".." are directories, and a dotfile
+	// is hidden from the person looking for their labels.
+	bad := strings.HasPrefix(label, ".")
 	for _, r := range label {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
 		default:
-			return "", fmt.Errorf("label %q: use letters, digits, - and _", label)
+			bad = true
 		}
+	}
+	if bad {
+		return "", fmt.Errorf("label %q: use letters, digits, and - _ .", label)
 	}
 	return filepath.Join(dir, label+".json"), nil
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -48,6 +47,7 @@ type SendContract struct {
 type EditContract struct {
 	Usage  string `json:"usage"`
 	Track  string `json:"track"`
+	JSON   string `json:"json"`
 	Silent string `json:"silent"`
 	State  string `json:"state"`
 }
@@ -85,6 +85,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 		Edit: EditContract{
 			Usage:  "morse edit <message_id> <title> [body]  |  morse edit --track <label> <title> [body]",
 			Track:  "--track <label> names the message morse remembered under that label; the label is repointed if the message it named is gone",
+			JSON:   "--json prints the id of the message that now carries the text, which differs from the one edited when a gone message was replaced",
 			Silent: "an edit never notifies anyone — that is the API's behaviour, not a flag — so there is no --silent to pass and nothing arrives on a lock screen",
 			State:  "labels live in $XDG_STATE_HOME/morse (else ~/.local/state/morse); they record what morse last sent, not anything Telegram reports back",
 		},
@@ -96,9 +97,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 	}
 
 	if *asJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(caps)
+		return writeJSON(out, caps)
 	}
 
 	state := "not configured"
@@ -110,11 +109,25 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 	if caps.ConfigErr != "" {
 		fmt.Fprintf(out, "          %s\n", caps.ConfigErr)
 	}
-	fmt.Fprintf(out, "env       %s\n\nsend\n  %s\n  %s\n  %s\n  %s\n  %s\n  %s\n  the body is read from stdin when no body argument is given\n",
-		strings.Join(caps.Delivery.Env, " "), caps.Send.Usage, caps.Send.Named,
-		caps.Send.Silent, caps.Send.File, caps.Send.Track, caps.Send.JSON)
-	fmt.Fprintf(out, "\nedit\n  %s\n  %s\n  %s\n  %s\n",
-		caps.Edit.Usage, caps.Edit.Track, caps.Edit.Silent, caps.Edit.State)
+	fmt.Fprintf(out, "env       %s\n", strings.Join(caps.Delivery.Env, " "))
+
+	// A command is a heading and its lines, so it is written that way: adding
+	// one line to a contract is adding one line here, rather than a format verb
+	// that has to stay in step with an argument three lines further along.
+	for _, command := range []struct {
+		name  string
+		lines []string
+	}{
+		{"send", []string{caps.Send.Usage, caps.Send.Named, caps.Send.Silent, caps.Send.File,
+			caps.Send.Track, caps.Send.JSON,
+			"the body is read from stdin when no body argument is given"}},
+		{"edit", []string{caps.Edit.Usage, caps.Edit.Track, caps.Edit.JSON, caps.Edit.Silent, caps.Edit.State}},
+	} {
+		fmt.Fprintf(out, "\n%s\n", command.name)
+		for _, line := range command.lines {
+			fmt.Fprintf(out, "  %s\n", line)
+		}
+	}
 	return nil
 }
 

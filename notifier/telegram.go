@@ -27,13 +27,25 @@ const (
 	maxUploadBytes = 50 << 20
 )
 
-// ErrMessageGone reports that the message an edit named is no longer there to
-// edit — deleted from the chat, or belonging to a different chat or bot.
-// Telegram answers all of those with a 400 and a description, so morse reads
-// the description to tell "that message is gone" apart from "that request was
-// wrong", which is the difference between recovering by sending a fresh message
-// and hiding a real mistake behind one.
-var ErrMessageGone = errors.New("message not found")
+// What Telegram refuses, as something a caller can branch on.
+//
+// The Bot API says why it refused only in prose, in the description of a 400,
+// so these are the one place morse reads that prose — see refusal. A caller
+// matching on the text of an error instead would be reading a sentence morse
+// wrote, and would break the moment that sentence was reworded.
+var (
+	// ErrMessageGone reports that the message an edit named is no longer there
+	// to edit: deleted from the chat, or belonging to a different chat or bot.
+	// Telling it apart from "that request was wrong" is the difference between
+	// recovering by sending a fresh message and hiding a real mistake behind
+	// one.
+	ErrMessageGone = errors.New("message not found")
+
+	// ErrNotModified reports that an edit would have changed nothing, which
+	// Telegram treats as a failure. Whether that matters is the caller's to
+	// decide: something reporting an unchanged state has done its job.
+	ErrNotModified = errors.New("message is unchanged")
+)
 
 // Telegram sends messages via the Telegram Bot API.
 type Telegram struct {
@@ -73,12 +85,7 @@ func (t *Telegram) Send(ctx context.Context, title, message string, silent bool)
 		"disable_notification": silent,
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return 0, fmt.Errorf("marshaling payload: %w", err)
-	}
-
-	return t.post(ctx, "sendMessage", "application/json", bytes.NewReader(body))
+	return t.postJSON(ctx, "sendMessage", payload)
 }
 
 // Edit rewrites a message already in the chat, in place.
@@ -87,6 +94,10 @@ func (t *Telegram) Send(ctx context.Context, title, message string, silent bool)
 // so a caller reporting the state of something long-running can keep one line
 // in the chat up to date instead of adding to it. There is no silent parameter
 // because there is no louder alternative to choose.
+//
+// A refusal is reported as it came: ErrNotModified and ErrMessageGone say what
+// Telegram objected to, and what should happen about it is the caller's to
+// decide.
 func (t *Telegram) Edit(ctx context.Context, messageID int64, title, message string) error {
 	payload := map[string]any{
 		"chat_id":    t.chatID,
@@ -95,19 +106,17 @@ func (t *Telegram) Edit(ctx context.Context, messageID int64, title, message str
 		"parse_mode": "HTML",
 	}
 
+	_, err := t.postJSON(ctx, "editMessageText", payload)
+	return err
+}
+
+// postJSON sends one JSON request to a Bot API method.
+func (t *Telegram) postJSON(ctx context.Context, method string, payload map[string]any) (int64, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshaling payload: %w", err)
+		return 0, fmt.Errorf("marshaling payload: %w", err)
 	}
-
-	_, err = t.post(ctx, "editMessageText", "application/json", bytes.NewReader(body))
-	if err != nil && strings.Contains(err.Error(), "message is not modified") {
-		// Telegram rejects an edit that would change nothing. A caller
-		// reporting an unchanged state is doing exactly what it should, and
-		// the chat already says what it was asked to say.
-		return nil
-	}
-	return err
+	return t.post(ctx, method, "application/json", bytes.NewReader(body))
 }
 
 // SendDocument uploads a file and reports it with the same title and body a
@@ -199,8 +208,8 @@ func (t *Telegram) post(ctx context.Context, method, contentType string, body io
 
 	if resp.StatusCode != http.StatusOK {
 		err := fmt.Errorf("telegram API error %d: %v", resp.StatusCode, result.Description)
-		if gone(result.Description) {
-			return 0, fmt.Errorf("%w: %w", ErrMessageGone, err)
+		if sentinel := refusal(result.Description); sentinel != nil {
+			return 0, fmt.Errorf("%w: %w", sentinel, err)
 		}
 		return 0, err
 	}
@@ -211,21 +220,31 @@ func (t *Telegram) post(ctx context.Context, method, contentType string, body io
 	return result.Result.MessageID, nil
 }
 
-// gone reports whether a rejection means the message itself is no longer there,
-// as opposed to the request being wrong. Telegram says so only in prose, and
-// only in these words.
-func gone(description string) bool {
-	for _, phrase := range []string{
-		"message to edit not found",
-		"message can't be edited",
-		"MESSAGE_ID_INVALID",
-		"message identifier is not specified",
+// refusal reads what Telegram objected to out of its description, and returns
+// the sentinel that says so — or nil for a rejection with no particular meaning
+// to a caller.
+//
+// This is the only place in morse that matches on Telegram's prose. The Bot API
+// offers nothing else to go on: the error codes do not distinguish these cases,
+// so the sentence is the signal. Keeping it to one function means a reworded
+// phrase is one thing to fix, and the phrases are kept to the ones that mean
+// exactly what the sentinel claims — "message can't be edited", for instance,
+// is a message that exists but is too old or not the bot's, which is a real
+// problem to report rather than one to paper over with a new message.
+func refusal(description string) error {
+	for _, known := range []struct {
+		phrase   string
+		sentinel error
+	}{
+		{"message to edit not found", ErrMessageGone},
+		{"MESSAGE_ID_INVALID", ErrMessageGone},
+		{"message is not modified", ErrNotModified},
 	} {
-		if strings.Contains(description, phrase) {
-			return true
+		if strings.Contains(description, known.phrase) {
+			return known.sentinel
 		}
 	}
-	return false
+	return nil
 }
 
 // caption renders a title and body as Telegram HTML, within a length limit.
