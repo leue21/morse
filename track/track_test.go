@@ -83,7 +83,7 @@ func TestLabelsThatAreNotNames(t *testing.T) {
 
 func TestLabelsThatAreNames(t *testing.T) {
 	dir := t.TempDir()
-	for _, label := range []string{"nightly-backup", "nightly-backup", "job_2", "v1.2"} {
+	for _, label := range []string{"nightly-backup", "deploy", "job_2", "v1.2"} {
 		if err := Save(dir, Record{Label: label, MessageID: 1}); err != nil {
 			t.Errorf("Save(%q): %v", label, err)
 		}

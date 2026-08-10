@@ -54,7 +54,7 @@ func TestEditRewritesTheNamedMessage(t *testing.T) {
 	tg := NewTelegram("tok", 42)
 	tg.baseURL = srv.URL()
 
-	if err := tg.Edit(context.Background(), 7, "Nightly backup", "saved show.ts"); err != nil {
+	if err := tg.Edit(context.Background(), 7, "Nightly backup", "done: 412 files"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +68,7 @@ func TestEditRewritesTheNamedMessage(t *testing.T) {
 	if got, ok := payload["chat_id"].(float64); !ok || int64(got) != 42 {
 		t.Errorf("chat_id = %v, want 42", payload["chat_id"])
 	}
-	if payload["text"] != "<b>Nightly backup</b>\nsaved show.ts" {
+	if payload["text"] != "<b>Nightly backup</b>\ndone: 412 files" {
 		t.Errorf("text = %v", payload["text"])
 	}
 	// An edit has no louder form, so there is nothing to suppress and nothing

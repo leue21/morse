@@ -79,7 +79,8 @@ usage:
   morse send --title <t> --body <b>
                               the same, named rather than positional
   morse send --track <label> [--json] <title> [body]
-                              remember the message under a label, or print its id
+                              keep one message current: sent the first time,
+                              rewritten every time after — call it either way
   morse edit <message_id> <title> [body]
                               rewrite a message already in the chat; never notifies
   morse edit --track <label> [--json] <title> [body]
@@ -157,8 +158,16 @@ func (f *messageFlags) done(out io.Writer, messageID, chatID int64, title, body 
 }
 
 // cmdSend parses the send flags and posts one message.
+//
+// With --track it reports a thing rather than an event: the label stands for one
+// line in the chat, and send puts it there — creating it the first time and
+// rewriting it every time after. A caller then makes the same call whether it is
+// starting up or carrying on, and does not have to know which, because the
+// answer changes underneath it. A job that lost its state file, or restarts
+// straight into its next update, would otherwise have to tell a first report
+// from a later one to avoid failing.
 func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Writer) error {
-	f := newMessageFlags("send", defaultConfig, "remember this message under a label, for a later edit")
+	f := newMessageFlags("send", defaultConfig, "keep the message under this label current: sent the first time, rewritten after")
 	silent := f.fs.Bool("silent", false, "deliver without a notification sound")
 	file := f.fs.String("file", "", "upload this file, with the title and body as its caption")
 	if err := f.fs.Parse(args); err != nil {
@@ -176,16 +185,54 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	}
 	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
 
+	// An upload has no in-place form — replacing a document is a different API
+	// call, and morse does not make it — so a tracked file send is a new message
+	// each time, and the label follows it.
+	var tracked int64
+	if *f.label != "" && *file == "" {
+		if tracked, err = trackedID(*f.label); err != nil {
+			return err
+		}
+	}
+
 	var messageID int64
-	if *file != "" {
+	switch {
+	case tracked != 0:
+		messageID, err = editMessage(ctx, tg, tracked, title, body, func() (int64, error) {
+			return tg.Send(ctx, title, body, *silent)
+		})
+	case *file != "":
 		messageID, err = tg.SendDocument(ctx, *file, title, body, *silent)
-	} else {
+	default:
 		messageID, err = tg.Send(ctx, title, body, *silent)
 	}
 	if err != nil {
 		return err
 	}
 	return f.done(out, messageID, cfg.Telegram.ChatID, title, body)
+}
+
+// editMessage rewrites a message and reports which message ended up carrying the
+// text, resolving the two ways Telegram can refuse an edit.
+//
+// resend says what to do about a message that is gone — deleted from the chat,
+// or belonging to a chat the config no longer points at. A caller that named the
+// message by label means "the message that reports this thing", so it passes a
+// way to start a new one; one that named an id means that message, and passes
+// nil so the failure stands.
+func editMessage(ctx context.Context, tg *notifier.Telegram, messageID int64, title, body string, resend func() (int64, error)) (int64, error) {
+	switch err := tg.Edit(ctx, messageID, title, body); {
+	case errors.Is(err, notifier.ErrNotModified):
+		// Telegram refuses an edit that would change nothing. Something
+		// reporting an unchanged state is doing exactly what it should, and the
+		// chat already says what it was asked to say.
+		return messageID, nil
+	case errors.Is(err, notifier.ErrMessageGone) && resend != nil:
+		return resend()
+	case err != nil:
+		return 0, err
+	}
+	return messageID, nil
 }
 
 // cmdEdit rewrites a message morse already sent.
@@ -214,23 +261,17 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	}
 	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
 
-	switch err = tg.Edit(ctx, messageID, title, body); {
-	case errors.Is(err, notifier.ErrNotModified):
-		// Telegram refuses an edit that would change nothing. Something
-		// reporting an unchanged state is doing exactly what it should, and the
-		// chat already says what it was asked to say.
-		err = nil
-	case errors.Is(err, notifier.ErrMessageGone) && *f.label != "":
-		// A label names "the message that reports this thing", not one
-		// particular message, so when that message is gone — deleted from the
-		// chat, or sent to a chat the config no longer points at — the honest
-		// reading is to start a new one and point the label at it. Otherwise
-		// deleting a single message would silence the job behind it for good,
-		// and the message a reader is meant to interact with is exactly the one
-		// that gets deleted. An explicit id means *that* message, so there the
-		// failure stands.
-		messageID, err = tg.Send(ctx, title, body, true)
+	// A label names the message that reports a thing, not one particular
+	// message, so a gone one is replaced and the label repointed: otherwise
+	// deleting a single message would silence the job behind it for good, and
+	// the message a reader is meant to interact with is exactly the one that
+	// gets deleted. The replacement goes out silently, since the caller asked
+	// to edit and an edit never notifies.
+	var resend func() (int64, error)
+	if *f.label != "" {
+		resend = func() (int64, error) { return tg.Send(ctx, title, body, true) }
 	}
+	messageID, err = editMessage(ctx, tg, messageID, title, body, resend)
 	if err != nil {
 		return err
 	}
@@ -278,9 +319,8 @@ func remember(label string, messageID, chatID int64, title, body string) error {
 	})
 }
 
-// recall looks a label up, and says what to do about a label that means nothing
-// yet: the first report of a run is a send, and only the ones after it are
-// edits.
+// recall looks a label up for a command that needs it to mean something
+// already, and says what to do when it does not.
 func recall(label string) (*track.Record, error) {
 	dir, err := track.Dir()
 	if err != nil {
@@ -291,6 +331,25 @@ func recall(label string) (*track.Record, error) {
 		return nil, fmt.Errorf("%w — send it first: morse send --track %s ...", err, label)
 	}
 	return rec, err
+}
+
+// trackedID looks a label up for a command that is happy either way, reporting
+// 0 for a label morse has not seen. A label with no message yet is not a
+// problem to report but a message to send: it is what every label looks like
+// the first time, and what one looks like again after its state file is lost.
+func trackedID(label string) (int64, error) {
+	dir, err := track.Dir()
+	if err != nil {
+		return 0, err
+	}
+	rec, err := track.Load(dir, label)
+	switch {
+	case errors.Is(err, track.ErrNoSuchLabel):
+		return 0, nil
+	case err != nil:
+		return 0, err
+	}
+	return rec.MessageID, nil
 }
 
 // writeJSON prints what a --json flag asked for, indented so a person reading

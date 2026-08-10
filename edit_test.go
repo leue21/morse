@@ -71,6 +71,38 @@ func TestEditTargetFromALabelThatWasNeverSent(t *testing.T) {
 	}
 }
 
+// `send --track` is the call a caller makes every time, so a label it has never
+// seen is not a failure: it is the first send, which is what a fresh install and
+// a lost state file both look like.
+func TestTrackedIDOfAnUnknownLabelIsNotAnError(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	id, err := trackedID("never-sent")
+	if err != nil || id != 0 {
+		t.Fatalf("got (%d, %v), want (0, nil)", id, err)
+	}
+}
+
+func TestTrackedIDFindsAKnownLabel(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := remember("nightly-backup", 77, 42, "Nightly backup", "running"); err != nil {
+		t.Fatal(err)
+	}
+	id, err := trackedID("nightly-backup")
+	if err != nil || id != 77 {
+		t.Fatalf("got (%d, %v), want (77, nil)", id, err)
+	}
+}
+
+// A label that is not a name has to stay an error rather than being read as
+// "unknown, so send a new one" — that would write the message to a path the
+// caller did not ask for.
+func TestTrackedIDStillRefusesALabelThatIsNotAName(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if _, err := trackedID("../../.ssh/config"); err == nil {
+		t.Fatal("expected a refusal")
+	}
+}
+
 // What morse writes down has to be enough to edit the message again, and enough
 // for a person reading the file to see what the label stands for.
 func TestRememberRecordsTheMessage(t *testing.T) {

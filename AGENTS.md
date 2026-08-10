@@ -53,6 +53,11 @@ whether it was read, so a record only ever says what morse itself last did.
 - An edit never notifies, by API behaviour rather than by flag, so `morse edit`
   takes no `--silent`. Do not add one: it would imply a louder alternative that
   does not exist
+- `send --track <label>` sends or rewrites depending on what the label already
+  means, so a caller can make one call every time and never branch on whether
+  it has reported before. `edit --track` is the strict form and fails on a
+  label that means nothing yet — keep it that way, it is what makes a mistyped
+  label say so instead of quietly starting a second line
 - The Bot API says *why* it refused only in prose, in the description of a 400.
   `notifier.refusal` is the one place that reads that prose, turning the phrases
   morse can act on into sentinels (`ErrMessageGone`, `ErrNotModified`); add a

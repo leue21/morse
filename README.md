@@ -8,7 +8,7 @@ echo "$logs" | morse send "Build failed on main"
 morse send --silent "Backup finished" "412 files, 3m21s"
 morse send --title "Backup failed" --body "$out"
 morse send --file report.pdf "Nightly report"
-morse edit --track nightly-backup "Nightly backup" "✓ saved show.ts"
+morse send --track nightly "Nightly backup" "✓ done — 412 files"
 ```
 
 morse sends one message and exits. Anything that wants to be told something
@@ -149,15 +149,22 @@ that matter.
 ## Updating a message instead of sending another
 
 ```sh
-morse send --track nightly-backup --silent "Nightly backup" "idle"
-morse edit --track nightly-backup "Nightly backup" "● running — started 20:15"
-morse edit --track nightly-backup "Nightly backup" "✓ saved show.ts — 20:15–21:03, 1.2 GB"
+morse send --track nightly --silent "Nightly backup" "idle"
+morse send --track nightly --silent "Nightly backup" "● running — started 03:00"
+morse send --track nightly --silent "Nightly backup" "✓ done 03:14 — 412 files, 1.2 GB"
 ```
 
 Something long-running has news repeatedly, and one message per update fills
-the chat with a history nobody asked for. `edit` rewrites a message already in
-the chat, so the same line keeps saying what is true now — you look when you
-want to know, rather than being told each time.
+the chat with a history nobody asked for. A `--track` label stands for one line
+in the chat: the first `send` puts it there, and every `send` after rewrites it,
+so the same line keeps saying what is true now — you look when you want to know,
+rather than being told each time.
+
+The three commands above are identical on purpose. A caller reporting
+repeatedly does not have to know whether this is its first report or its
+hundredth, which is the case that otherwise breaks: a job restarting mid-run, or
+one whose state file was wiped, would have to tell a first send from a later one
+to avoid failing on the wrong one.
 
 **An edit never notifies anyone.** Not quietly, not with a badge: Telegram does
 not notify on edits at all, and that is the API's behaviour rather than a
@@ -167,14 +174,20 @@ can make a sound, so send it `--silent` too if even that is more than you want.
 `--track <label>` is how the second run finds the message the first one sent.
 morse writes the message id down under the label — in `$XDG_STATE_HOME/morse`,
 else `~/.local/state/morse` — and looks it up again next time, so a script does
-not have to thread a variable through a restart. A label morse has never seen
-is an error saying to send it first, since the first report of a run is a send
-and only the ones after it are edits.
+not have to thread a variable through a restart.
 
-If the tracked message is gone — you deleted it, or the chat id changed —
-`edit --track` sends a new one silently and points the label at it. Otherwise
+If the tracked message is gone — you deleted it, or the chat id changed — the
+next `send --track` starts a new one and points the label at it. Otherwise
 deleting a single message would silence the job behind it for good, and the
 message you are meant to interact with is exactly the one that gets deleted.
+
+`morse edit --track <label>` does the same rewrite but insists the label
+already means something, failing if it does not. That is the one to reach for
+interactively, where a mistyped label should say so rather than quietly start a
+second line; `send --track` is the one for a script.
+
+A tracked `--file` send is a new message every time, since an uploaded document
+cannot be rewritten in place; the label follows the newest one.
 
 For a caller that would rather hold the id itself:
 
@@ -187,15 +200,12 @@ An explicit id means *that* message, so if it is gone the edit fails rather
 than sending a replacement — only a label stands for "the message that reports
 this thing" rather than one particular message.
 
-`edit --json` prints the id of the message that now carries the text, which is
-a different one than you asked for exactly when a gone message was replaced.
+`--json` prints the id of the message that now carries the text, which differs
+from the one you named exactly when a gone message was replaced.
 
-Editing to the text a message already has is not an error: Telegram refuses the
-call, and morse treats that as the success it is — the chat already says what
-it was asked to say.
-
-`--file` is not editable: replacing an uploaded document is a different API
-call, and morse does not make it.
+Rewriting a message to the text it already has is not an error: Telegram
+refuses the call, and morse treats that as the success it is — the chat already
+says what it was asked to say.
 
 ### What morse can and cannot tell you
 
