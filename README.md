@@ -8,6 +8,7 @@ echo "$logs" | morse send "Build failed on main"
 morse send --silent "Backup finished" "412 files, 3m21s"
 morse send --title "Backup failed" --body "$out"
 morse send --file report.pdf "Nightly report"
+morse edit --track nightly-backup "Nightly backup" "✓ saved show.ts"
 ```
 
 morse sends one message and exits. Anything that wants to be told something
@@ -83,12 +84,15 @@ matters for anything running in a container or under an agent.
 ```
 morse send [--silent] [--file path] <title> [body]   send a message
 morse send --title <t> --body <b>                    the same, named
+morse send --track <label> [--json] <title> [body]   send, and remember it
+morse edit <message_id> <title> [body]               rewrite a sent message
+morse edit --track <label> <title> [body]            the same, by label
 morse capabilities [--json]                          what morse accepts
 morse version
 morse help
 ```
 
-`send` and `capabilities` take `--config <path>` to read credentials from
+`send`, `edit` and `capabilities` take `--config <path>` to read credentials from
 somewhere other than `~/.config/morse/config.yaml`. Flags come before the
 title; a flag after it would otherwise end up in the message body.
 
@@ -141,6 +145,57 @@ oversized file fails immediately instead of after the whole transfer.
 stays in the chat — it just does not buzz, so routine facts can be reported
 without training the reader to mute the chat, which would cost the messages
 that matter.
+
+## Updating a message instead of sending another
+
+```sh
+morse send --track nightly-backup --silent "Nightly backup" "idle"
+morse edit --track nightly-backup "Nightly backup" "● running — started 20:15"
+morse edit --track nightly-backup "Nightly backup" "✓ saved show.ts — 20:15–21:03, 1.2 GB"
+```
+
+Something long-running has news repeatedly, and one message per update fills
+the chat with a history nobody asked for. `edit` rewrites a message already in
+the chat, so the same line keeps saying what is true now — you look when you
+want to know, rather than being told each time.
+
+**An edit never notifies anyone.** Not quietly, not with a badge: Telegram does
+not notify on edits at all, and that is the API's behaviour rather than a
+setting, which is why `edit` has no `--silent` to pass. Only the first `send`
+can make a sound, so send it `--silent` too if even that is more than you want.
+
+`--track <label>` is how the second run finds the message the first one sent.
+morse writes the message id down under the label — in `$XDG_STATE_HOME/morse`,
+else `~/.local/state/morse` — and looks it up again next time, so a script does
+not have to thread a variable through a restart. A label morse has never seen
+is an error saying to send it first, since the first report of a run is a send
+and only the ones after it are edits.
+
+If the tracked message is gone — you deleted it, or the chat id changed —
+`edit --track` sends a new one silently and points the label at it. Otherwise
+deleting a single message would silence the job behind it for good, and the
+message you are meant to interact with is exactly the one that gets deleted.
+
+For a caller that would rather hold the id itself:
+
+```sh
+id=$(morse send --json "Backup" "0%" | jq .message_id)
+morse edit "$id" "Backup" "done"
+```
+
+An explicit id means *that* message, so if it is gone the edit fails rather
+than sending a replacement — only a label stands for "the message that reports
+this thing" rather than one particular message.
+
+`--file` is not editable: replacing an uploaded document is a different API
+call, and morse does not make it.
+
+### What morse can and cannot tell you
+
+The label file records what morse last sent or edited, and when. That is
+morse's own note, not a report from Telegram: a bot cannot ask the Bot API what
+a message currently says, whether it still exists, or whether anyone read it —
+there is no `getMessage`. To see the state, look at the chat.
 
 ## Asking what morse accepts
 

@@ -35,6 +35,34 @@ Rules that will bite you otherwise:
   Telegram rejection), 2 on an unknown command or no arguments. Errors go to
   stderr and never contain the bot token.
 
+## Updating instead of sending again
+
+When something long-running reports repeatedly — progress, a job's state,
+a queue draining — send once and rewrite that message, rather than adding a
+line to the chat each time:
+
+```sh
+morse send --track backup --silent "Backup" "0%"   # once, at the start
+morse edit --track backup "Backup" "40%"           # as often as you like
+morse edit --track backup "Backup" "done — 3m21s"
+```
+
+- **An edit never notifies anyone.** That is the Bot API's behaviour, not a
+  flag, so `edit` has no `--silent` and there is nothing to suppress. Only the
+  first `send` can make a sound.
+- `--track <label>` lets the next run find the message: morse writes the id
+  under that label in `~/.local/state/morse`. Editing a label that was never
+  sent is an error — send it first.
+- If the tracked message was deleted, `edit --track` silently sends a new one
+  and repoints the label. An explicit id (`morse edit 4242 ...`) means that one
+  message and fails instead.
+- `morse send --json` prints the message id, for a caller that would rather
+  hold it than use a label: `id=$(morse send --json "Backup" "0%" | jq .message_id)`.
+- morse cannot tell you what a message currently says or whether it was read —
+  the Bot API has no way to ask. The label file is morse's own record of what
+  it last sent.
+- `--file` cannot be edited.
+
 ## Before sending: is it configured?
 
 ```sh
@@ -61,7 +89,9 @@ variables is the whole setup — never print or echo the token.
   gets read on a lock screen; bodies are for the log tail, the exit code, the
   diff stat.
 - Send once per event. A loop that notifies per iteration is a job that should
-  decide first and speak once.
+  decide first and speak once — or one that should `send --track` once and
+  `edit --track` after that, so the chat keeps one current line instead of a
+  history.
 
 ## Do not
 

@@ -27,10 +27,11 @@ when to speak. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is
 stdlib).
 
 ```
-main.go              → subcommand dispatch (send, capabilities, help) and the send command
+main.go              → subcommand dispatch (send, edit, capabilities, help) and those commands
 capabilities.go      → `morse capabilities`: the callable interface, as text or JSON
 config/              → telegram credentials, from the file or MORSE_BOT_TOKEN / MORSE_CHAT_ID
-notifier/            → Telegram Bot API client (Send, SendDocument)
+notifier/            → Telegram Bot API client (Send, SendDocument, Edit)
+track/               → which message a `--track` label stands for, under ~/.local/state/morse
 internal/testutil/   → FakeAPI HTTP mock for tests
 ```
 
@@ -39,9 +40,24 @@ send`, not code inside morse. Adding scheduling, watching, or a long-running
 mode to this repo is out of scope: the caller has the context to decide when
 there is something worth reporting, and morse only has to say it.
 
+`track/` does not change that. It is a lookup table kept on the caller's
+behalf — the same message id it could have stored itself — written during a run
+and read at the start of the next one. Nothing in it runs, watches, or expires,
+and morse never acts on it without being asked. It also never reports anything
+Telegram said: the Bot API has no way to fetch a message's current content or
+whether it was read, so a record only ever says what morse itself last did.
+
 ## Conventions
 
 - `--silent` maps to Telegram's `disable_notification`; the message still arrives
+- An edit never notifies, by API behaviour rather than by flag, so `morse edit`
+  takes no `--silent`. Do not add one: it would imply a louder alternative that
+  does not exist. Telegram rejects an edit that changes nothing
+  ("message is not modified"); that is a success, not a failure to report
+- A `--track` label becomes a filename, so it is validated before it is joined
+  to a path, and one label is one file — two callers never share a file and so
+  need no lock. Writes go through a temp file and a rename, because a truncated
+  record strands the message it names
 - Errors are wrapped with `fmt.Errorf("context: %w", err)`; the CLI exits
   non-zero and prints to stderr — once, from `main`, so flag sets use
   `ContinueOnError` with their output discarded

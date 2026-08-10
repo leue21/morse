@@ -24,7 +24,7 @@ func TestSendSuccess(t *testing.T) {
 	tg := NewTelegram("tok123", 42)
 	tg.baseURL = srv.URL()
 
-	err := tg.Send(context.Background(), "Test Title", "Hello world", false)
+	_, err := tg.Send(context.Background(), "Test Title", "Hello world", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestSendAPIError(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	err := tg.Send(context.Background(), "Title", "Msg", false)
+	_, err := tg.Send(context.Background(), "Title", "Msg", false)
 	if err == nil {
 		t.Fatal("expected error for 400 response")
 	}
@@ -69,7 +69,7 @@ func TestSendNetworkError(t *testing.T) {
 	tg := NewTelegram("s3cr3t-token", 1)
 	tg.baseURL = "http://127.0.0.1:1" // nothing listening
 
-	err := tg.Send(context.Background(), "Title", "Msg", false)
+	_, err := tg.Send(context.Background(), "Title", "Msg", false)
 	if err == nil {
 		t.Fatal("expected error for unreachable server")
 	}
@@ -90,7 +90,7 @@ func TestSendEscapesMarkupInTheMessage(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	if err := tg.Send(context.Background(), "a<b & c", `open("x") failed: [Errno 2] C:\logs`, false); err != nil {
+	if _, err := tg.Send(context.Background(), "a<b & c", `open("x") failed: [Errno 2] C:\logs`, false); err != nil {
 		t.Fatal(err)
 	}
 	var payload map[string]any
@@ -112,7 +112,7 @@ func TestSendMapsSilenceToTheTelegramFlag(t *testing.T) {
 		tg := NewTelegram("tok", 42)
 		tg.baseURL = srv.URL()
 
-		if err := tg.Send(context.Background(), "Title", "Body", silent); err != nil {
+		if _, err := tg.Send(context.Background(), "Title", "Body", silent); err != nil {
 			t.Fatal(err)
 		}
 		var payload map[string]any
@@ -151,7 +151,7 @@ func TestSendDocumentUploadsTheFileWithACaption(t *testing.T) {
 	tg := NewTelegram("tok", 42)
 	tg.baseURL = srv.URL()
 
-	if err := tg.SendDocument(context.Background(), path, "Nightly", "done", true); err != nil {
+	if _, err := tg.SendDocument(context.Background(), path, "Nightly", "done", true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -203,7 +203,7 @@ func TestSendDocumentOmitsAnEmptyCaption(t *testing.T) {
 	tg := NewTelegram("tok", 42)
 	tg.baseURL = srv.URL()
 
-	if err := tg.SendDocument(context.Background(), path, "", "", false); err != nil {
+	if _, err := tg.SendDocument(context.Background(), path, "", "", false); err != nil {
 		t.Fatal(err)
 	}
 	form, cleanup := parseUpload(t, srv.Requests[0])
@@ -232,7 +232,7 @@ func TestSendDocumentRefusesWhatTelegramWouldReject(t *testing.T) {
 	tg := NewTelegram("tok", 42)
 	tg.baseURL = srv.URL()
 
-	err = tg.SendDocument(context.Background(), path, "Image", "", false)
+	_, err = tg.SendDocument(context.Background(), path, "Image", "", false)
 	if err == nil || !strings.Contains(err.Error(), "at most 50 MB") {
 		t.Fatalf("err = %v, want a size refusal", err)
 	}
@@ -244,7 +244,7 @@ func TestSendDocumentRefusesWhatTelegramWouldReject(t *testing.T) {
 func TestSendDocumentReportsAMissingFile(t *testing.T) {
 	tg := NewTelegram("tok", 42)
 	tg.baseURL = "http://127.0.0.1:1" // never reached
-	err := tg.SendDocument(context.Background(), filepath.Join(t.TempDir(), "gone"), "T", "", false)
+	_, err := tg.SendDocument(context.Background(), filepath.Join(t.TempDir(), "gone"), "T", "", false)
 	if err == nil || !strings.Contains(err.Error(), "opening file") {
 		t.Fatalf("err = %v, want an open failure", err)
 	}
