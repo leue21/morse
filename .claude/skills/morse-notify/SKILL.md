@@ -12,6 +12,7 @@ something to say.
 
 ```sh
 morse send "Backup failed" "rsync exit 23"       # title + body
+morse send --title "Backup failed" --body "$out" # named values for a script
 morse send "Deploy finished"                     # title only; body becomes "(no details)"
 morse send --silent "Nightly job ok" "412 files" # delivers without a sound
 tail -n 30 build.log | morse send "Build failed"  # body from stdin
@@ -22,6 +23,8 @@ Rules that will bite you otherwise:
 
 - **Flags come before the title.** `morse send "title" --silent` is an error,
   not a silent send — anything after the title would land in the message body.
+- When a script supplies variables, prefer `--title "$title" --body "$body"`.
+  Named values remain unambiguous when one starts with a dash or is empty.
 - The body is read from stdin only when something is actually piped in. At a
   terminal, a title-only send returns immediately rather than hanging.
 - With no body argument *and* no pipe, a titled send still goes out.
@@ -76,8 +79,9 @@ morse capabilities --json
 It answers even when nothing is set up, so use it to check rather than sending
 a probe message. `.delivery.configured` is `false` when credentials are missing
 and `.config_error` says why; `.version` names the release, which `morse
-version` also prints on its own. Both commands accept `--config <path>` to read
-credentials from somewhere other than `~/.config/morse/config.yaml`.
+version` also prints on its own. `send`, `edit`, and `capabilities` accept
+`--config <path>` to read credentials from somewhere other than
+`~/.config/morse/config.yaml`; `version` requires no configuration.
 
 Credentials come from that file or from `MORSE_BOT_TOKEN` / `MORSE_CHAT_ID`,
 which win over the file. In a container or under an agent, setting the two
