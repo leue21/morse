@@ -45,6 +45,13 @@ var (
 	// Telegram treats as a failure. Whether that matters is the caller's to
 	// decide: something reporting an unchanged state has done its job.
 	ErrNotModified = errors.New("message is unchanged")
+
+	// ErrWebhookSet reports that the bot delivers its updates to a webhook, so
+	// there is nothing for morse to poll: the two ways of receiving are
+	// exclusive, and Telegram answers getUpdates with a 409 while one is set.
+	// The fix is specific enough to be worth naming — delete the webhook — and
+	// a bare conflict does not say which conflict it was.
+	ErrWebhookSet = errors.New("the bot has a webhook set")
 )
 
 // Telegram sends messages via the Telegram Bot API.
@@ -110,13 +117,24 @@ func (t *Telegram) Edit(ctx context.Context, messageID int64, title, message str
 	return err
 }
 
-// postJSON sends one JSON request to a Bot API method.
+// postJSON sends one JSON request to a Bot API method, and reads the message id
+// out of what came back.
 func (t *Telegram) postJSON(ctx context.Context, method string, payload map[string]any) (int64, error) {
+	result, err := t.callJSON(ctx, method, payload)
+	if err != nil {
+		return 0, err
+	}
+	return messageID(result), nil
+}
+
+// callJSON sends one JSON request to a Bot API method and hands back its
+// result, still encoded.
+func (t *Telegram) callJSON(ctx context.Context, method string, payload map[string]any) (json.RawMessage, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return 0, fmt.Errorf("marshaling payload: %w", err)
+		return nil, fmt.Errorf("marshaling payload: %w", err)
 	}
-	return t.post(ctx, method, "application/json", bytes.NewReader(body))
+	return t.call(ctx, method, "application/json", bytes.NewReader(body))
 }
 
 // SendDocument uploads a file and reports it with the same title and body a
@@ -185,39 +203,59 @@ func (t *Telegram) SendDocument(ctx context.Context, path, title, message string
 // the Bot API has no method that looks a message up afterwards — and without it
 // nothing could ever refer back to what was just sent.
 func (t *Telegram) post(ctx context.Context, method, contentType string, body io.Reader) (int64, error) {
+	result, err := t.call(ctx, method, contentType, body)
+	if err != nil {
+		return 0, err
+	}
+	return messageID(result), nil
+}
+
+// messageID reads the id out of the Message a method answered with.
+//
+// It is not something to insist on: the id is useful, not required, and a
+// caller that only wanted the message delivered should not see a failure
+// because the response was shaped unexpectedly.
+func messageID(result json.RawMessage) int64 {
+	var message struct {
+		MessageID int64 `json:"message_id"`
+	}
+	json.Unmarshal(result, &message)
+	return message.MessageID
+}
+
+// call sends one request to a Bot API method and hands back the `result` it
+// answered with, still encoded. Every method wraps its answer in the same
+// envelope but puts something different inside it — a Message, a File, an array
+// of Updates — so the envelope, the refusals and the token-stripping live here
+// and each caller decodes only the part it asked for.
+func (t *Telegram) call(ctx context.Context, method, contentType string, body io.Reader) (json.RawMessage, error) {
 	endpoint := fmt.Sprintf("%s/bot%s/%s", t.baseURL, t.botToken, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
-		return 0, fmt.Errorf("building request: %w", withoutURL(err))
+		return nil, fmt.Errorf("building request: %w", withoutURL(err))
 	}
 	req.Header.Set("Content-Type", contentType)
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("sending telegram message: %w", withoutURL(err))
+		return nil, fmt.Errorf("calling telegram %s: %w", method, withoutURL(err))
 	}
 	defer resp.Body.Close()
 
-	var result struct {
-		Description string `json:"description"`
-		Result      struct {
-			MessageID int64 `json:"message_id"`
-		} `json:"result"`
+	var envelope struct {
+		Description string          `json:"description"`
+		Result      json.RawMessage `json:"result"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	json.NewDecoder(resp.Body).Decode(&envelope)
 
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("telegram API error %d: %v", resp.StatusCode, result.Description)
-		if sentinel := refusal(result.Description); sentinel != nil {
-			return 0, fmt.Errorf("%w: %w", sentinel, err)
+		err := fmt.Errorf("telegram API error %d: %v", resp.StatusCode, envelope.Description)
+		if sentinel := refusal(envelope.Description); sentinel != nil {
+			return nil, fmt.Errorf("%w: %w", sentinel, err)
 		}
-		return 0, err
+		return nil, err
 	}
-
-	// A message id is not something to insist on: the id is useful, not
-	// required, and a caller that only wanted the message delivered should not
-	// see a failure because the response was shaped unexpectedly.
-	return result.Result.MessageID, nil
+	return envelope.Result, nil
 }
 
 // refusal reads what Telegram objected to out of its description, and returns
@@ -239,6 +277,9 @@ func refusal(description string) error {
 		{"message to edit not found", ErrMessageGone},
 		{"MESSAGE_ID_INVALID", ErrMessageGone},
 		{"message is not modified", ErrNotModified},
+		{"file not found", ErrNoSuchFile},
+		{"wrong file_id", ErrNoSuchFile},
+		{"can't use getUpdates method while webhook is active", ErrWebhookSet},
 	} {
 		if strings.Contains(description, known.phrase) {
 			return known.sentinel

@@ -14,13 +14,14 @@ import (
 // importing anything or reading this source. A script that has to learn the
 // interface by reading the code is coupled to it; one that can ask is not.
 type Capabilities struct {
-	Name      string       `json:"name"`
-	Version   string       `json:"version"`
-	Config    string       `json:"config"`
-	ConfigErr string       `json:"config_error,omitempty"`
-	Delivery  Delivery     `json:"delivery"`
-	Send      SendContract `json:"send"`
-	Edit      EditContract `json:"edit"`
+	Name      string          `json:"name"`
+	Version   string          `json:"version"`
+	Config    string          `json:"config"`
+	ConfigErr string          `json:"config_error,omitempty"`
+	Delivery  Delivery        `json:"delivery"`
+	Send      SendContract    `json:"send"`
+	Edit      EditContract    `json:"edit"`
+	Receive   ReceiveContract `json:"receive"`
 }
 
 type Delivery struct {
@@ -50,6 +51,19 @@ type EditContract struct {
 	JSON   string `json:"json"`
 	Silent string `json:"silent"`
 	State  string `json:"state"`
+}
+
+// ReceiveContract describes `morse receive`, whose limits are the point: a bot
+// cannot read a chat's history, so what a caller can reach is a window, and one
+// that finds that out by getting less than it expected has learned it the
+// expensive way.
+type ReceiveContract struct {
+	Usage  string `json:"usage"`
+	Window string `json:"window"`
+	JSON   string `json:"json"`
+	Text   string `json:"text"`
+	Save   string `json:"save"`
+	Pick   string `json:"pick"`
 }
 
 // cmdCapabilities reports the interface. It answers even when the config is
@@ -89,6 +103,14 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			Silent: "an edit never notifies anyone — that is the API's behaviour, not a flag — so there is no --silent to pass and nothing arrives on a lock screen",
 			State:  "labels live in $XDG_STATE_HOME/morse (else ~/.local/state/morse); they record what morse last sent, not anything Telegram reports back",
 		},
+		Receive: ReceiveContract{
+			Usage:  "morse receive list [--json] [--limit n]  |  morse receive get <message_id> [--save dir]",
+			Window: "what the bot can see is up to 100 of the updates telegram still holds, roughly a day's worth; there is no Bot API method that reads a chat's history, and morse keeps no archive of its own. Reading never consumes: morse sends no offset at all, since a positive one deletes every update below it and a negative one forgets everything before the window — both for every reader of the bot, not just morse. The cost is that a backlog longer than the window comes back oldest first, hiding newer messages behind it; list says so on stderr when it happens. morse also never sends allowed_updates, which telegram would remember and apply to every other client polling this bot",
+			JSON:   "--json prints one JSON object per line — message_id, chat_id, date, from, text, file — for jq or a picker",
+			Text:   "get writes the message's text to stdout exactly, with no trailing newline of its own, so where it ends up is the caller's business; a clipboard is one pipe away and is not something morse reaches for you",
+			Save:   "--save <dir> downloads what the message carried into that directory and prints the path; a bot may download at most 20 MB, and a filename already taken in that directory is refused rather than overwritten",
+			Pick:   "choosing a message is a fuzzy finder's job: `list` prints the id first on every line, so `morse receive list | fzf | cut -d' ' -f1 | xargs morse receive get` is the whole integration",
+		},
 	}
 	if _, err := config.Load(*configPath); err != nil {
 		caps.ConfigErr = err.Error()
@@ -122,6 +144,8 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			caps.Send.Track, caps.Send.JSON,
 			"the body is read from stdin when no body argument is given"}},
 		{"edit", []string{caps.Edit.Usage, caps.Edit.Track, caps.Edit.JSON, caps.Edit.Silent, caps.Edit.State}},
+		{"receive", []string{caps.Receive.Usage, caps.Receive.Window, caps.Receive.JSON,
+			caps.Receive.Text, caps.Receive.Save, caps.Receive.Pick}},
 	} {
 		fmt.Fprintf(out, "\n%s\n", command.name)
 		for _, line := range command.lines {

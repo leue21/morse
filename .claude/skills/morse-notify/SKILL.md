@@ -69,6 +69,16 @@ morse send --track backup --silent "Backup" "done — 3m21s"
   the Bot API has no way to ask. The label file is morse's own record of what
   it last sent.
 - `--file` cannot be edited.
+- Reading the other direction is `morse receive`: `list` shows what was sent
+  *to* the bot (id first on each line, `--json` for one object per line), and
+  `get <id> [--save <dir>]` writes its text to stdout, or saves what it
+  carried into a directory (pipe the text to `wl-copy`/`pbcopy` for a
+  clipboard — morse does not reach one itself). The window is up to 100 of the
+  updates Telegram still holds, roughly a day's worth, counted from the oldest
+  it has not been told to forget; reading never consumes it. `list` warns on
+  stderr when the window came back full, because then newer messages may be
+  queued behind the ones shown. This is the command for "get me the file I just
+  sent you" — none of it says anything about a message morse itself sent.
 
 ## Before sending: is it configured?
 

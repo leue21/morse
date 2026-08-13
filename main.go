@@ -50,6 +50,10 @@ func main() {
 		if err := cmdEdit(ctx, defaultConfig, args[1:], os.Stdout); err != nil {
 			fail(err)
 		}
+	case "receive":
+		if err := cmdReceive(ctx, defaultConfig, args[1:], os.Stdout); err != nil {
+			fail(err)
+		}
 	case "capabilities":
 		if err := cmdCapabilities(defaultConfig, args[1:], os.Stdout); err != nil {
 			fail(err)
@@ -85,6 +89,13 @@ usage:
                               rewrite a message already in the chat; never notifies
   morse edit --track <label> [--json] <title> [body]
                               the same, by label rather than by id
+  morse receive list [--json] [--limit n]
+                              up to 100 updates from the oldest unconfirmed one,
+                              with the reachable window shown newest first
+  morse receive get <message_id>
+                              its text, on stdout
+  morse receive get <message_id> --save <dir>
+                              its attachment, into a directory
   morse capabilities [--json] what morse accepts, for a caller
   morse version
   morse help

@@ -9,11 +9,15 @@ morse send --silent "Backup finished" "412 files, 3m21s"
 morse send --title "Backup failed" --body "$out"
 morse send --file report.pdf "Nightly report"
 morse send --track nightly "Nightly backup" "✓ done — 412 files"
+morse receive list | fzf | cut -d' ' -f1 | xargs morse receive get
 ```
 
 morse sends one message and exits. Anything that wants to be told something
 decides for itself when to speak, and calls morse to do the speaking: a script,
 a cron job, an agent, a person at a prompt.
+
+It reads the other direction the same way — one call, no daemon — so what was
+sent back to the bot can be found and used from the terminal it was meant for.
 
 ## Install
 
@@ -213,6 +217,113 @@ The label file records what morse last sent or edited, and when. That is
 morse's own note, not a report from Telegram: a bot cannot ask the Bot API what
 a message currently says, whether it still exists, or whether anyone read it —
 there is no `getMessage`. To see the state, look at the chat.
+
+## Reading the chat back
+
+Everything sent *to* the bot — a reply, a snippet pasted from a phone, a file —
+can be listed, searched and pulled down:
+
+```sh
+morse receive list                          # newest first, id in the first column
+morse receive get 481                       # its text, on stdout
+morse receive get 481 --save ~/Downloads    # what it carried, into a folder
+```
+
+Choosing one of them is a fuzzy finder's job rather than morse's, so the id
+comes first on every line and anything can sit in the middle:
+
+```sh
+morse receive list | fzf | cut -d' ' -f1 | xargs morse receive get
+```
+
+`--json` prints one object per line — `message_id`, `chat_id`, `date`, `from`,
+`text`, `file` — for jq or a picker that wants the fields apart.
+
+### Onto the clipboard
+
+`get` writes the text to stdout and stops there, because a clipboard is not
+morse's to reach: which program holds one depends on the display server, and
+over ssh the clipboard worth writing to is on the *other* end of the connection.
+Both are one pipe away, and the pipe knows things morse cannot guess.
+
+The text comes out exactly as it arrived, with no trailing newline of morse's
+own — a newline on the end of a pasted command line is a keystroke that runs it.
+
+```sh
+morse receive get 481 | wl-copy                    # wayland
+morse receive get 481 | xclip -selection clipboard # x11
+morse receive get 481 | pbcopy                     # macos
+```
+
+Over ssh, where no program on the far machine can reach your clipboard, the
+terminal can — with an OSC 52 escape sequence, which travels back down the
+connection the session came in on:
+
+```sh
+tgcopy() {
+    printf '\033]52;c;%s\a' "$(morse receive get "$1" | base64 -w0)" > /dev/tty
+}
+tgcopy 481
+```
+
+That needs a terminal that implements OSC 52 (kitty, WezTerm, foot, iTerm2,
+Alacritty and Windows Terminal do; macOS Terminal.app does not), and inside
+tmux it needs `set -g set-clipboard on` — the default, `external`, drops
+sequences coming from an application.
+
+### What you can see, and why it is a window
+
+The Bot API has no method that reads a chat's history. The only way in is
+`getUpdates`, which holds roughly a day of messages and at most a hundred at a
+time — so that is the window, and morse keeps no archive of its own to widen it.
+
+Reading never consumes, and that costs morse something to guarantee. There are
+three ways to ask, and two take updates away for good — from every reader of
+that bot, not just from morse:
+
+- A **positive offset** confirms everything below it, deleting it server-side.
+- A **negative offset** means "the last *n*", and the API says of it: *all
+  previous updates will be forgotten*. With a backlog longer than *n*, asking
+  this way destroys the oldest.
+- **No offset** returns updates "starting with the earliest unconfirmed
+  update", and forgets nothing.
+
+morse asks the third way, so nothing you run removes a message from the chat or
+from anyone else's view of it. The price is that a backlog longer than the
+window is read from the wrong end: the oldest come back and the newest sit
+behind them, out of reach without a confirmation morse will not make on your
+behalf. When the response fills the requested window, `list` warns on stderr
+that newer messages may be hidden; the backlog clears itself within a day.
+
+morse also never sends `allowed_updates`. Telegram remembers the last value any
+client gave it and applies it to every later call, so narrowing it to the two
+types morse reads would quietly stop callback queries and edits reaching
+anything else polling the same bot. morse ignores what it does not understand
+instead, which changes nothing for anyone.
+
+That is not the same as the window being identical every time you ask.
+**Telegram will not hand the same updates over twice in immediate succession**:
+a second `getUpdates` within about half a second comes back with the queue's
+oldest update and nothing else, and everything reappears once that passes.
+Nothing was consumed — they are just not offered again that fast. `get` knows,
+and asks a second time before reporting a message missing; two `list` calls
+back to back in one script will show you the short answer, so put a beat
+between them.
+
+Three things make that window look emptier than expected:
+
+- **In a group, privacy mode is on by default**, and a bot sees only commands
+  and replies to itself. Turn it off via @BotFather → Bot Settings → Group
+  Privacy. A one-to-one chat is unaffected.
+- **A webhook and polling are exclusive.** With one set, `getUpdates` is refused
+  outright, and morse says so.
+- **A poll moments after another poll** returns the short window described
+  above.
+
+A bot may download at most 20 MB, whatever it was allowed to upload. `--save`
+refuses a name that is already taken in the target directory rather than
+writing over it — the filename came from whoever sent the file, and two people
+pick `report.pdf` independently all the time.
 
 ## Asking what morse accepts
 
