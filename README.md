@@ -562,11 +562,22 @@ pick `report.pdf` independently all the time.
 morse is built to be called by a coding agent as readily as by a script: it
 needs no daemon, answers `morse capabilities --json` with every flag and limit
 even before it is configured, and keeps a long task to one status message with
-`--track`. An agent skill ships with the repository in
-[`.claude/skills/morse-notify/SKILL.md`](.claude/skills/morse-notify/SKILL.md):
-it tells an agent when to message you, how loudly, and how to keep a status
-line current or fetch something you sent the bot. Copy that directory into
-your agent's skills directory to make it available in every project.
+`--track`.
+
+An agent skill ships with the repository, in
+[`skills/morse-notify/SKILL.md`](skills/morse-notify/SKILL.md). It tells an
+agent when to message you, how loudly, and how to keep a status line current
+or fetch something you sent the bot. It is written for no agent in particular,
+in the common skill format — a `name` and `description` up front, plain
+instructions below — so any agent that loads skills can use it:
+
+```sh
+# link it into your agent's skills directory, so it follows this checkout
+ln -s "$PWD/skills/morse-notify" <your agent's skills directory>/morse-notify
+```
+
+An agent without skills can be pointed at the file itself, or simply told to
+run `morse capabilities --json` first.
 
 ## Asking what morse accepts
 

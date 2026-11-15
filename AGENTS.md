@@ -45,6 +45,8 @@ config/              → telegram credentials, from the file or MORSE_BOT_TOKEN 
 notifier/            → Telegram Bot API client (Send, SendDocument, Edit, Updates, Download)
 track/               → which message a `--track` label stands for, under ~/.local/state/morse
 internal/testutil/   → FakeAPI HTTP mock for tests
+skills/morse-notify/ → the agent skill, in the agent-neutral SKILL.md format; a
+                       link under .claude/skills makes it load in this repo
 cli_test.go          → whole commands against a fake API, via MORSE_API_URL
 smoke_test.go        → `make smoke`: the real API, in a test group (build tag)
 ```
@@ -81,6 +83,11 @@ Telegram said: the Bot API has no way to fetch a message's current content or
 whether it was read, so a record only ever says what morse itself last did.
 
 ## Conventions
+
+- The agent skill (`skills/morse-notify/SKILL.md`) is for any agent: describe
+  commands and behaviour, never one agent's tools, paths or features. A change
+  to what morse does that a caller would need to know about updates it in the
+  same change, and `capabilities` stays the authority it defers to
 
 - `--silent` maps to Telegram's `disable_notification`; the message still arrives
 - `send --topic <id>` maps to `message_thread_id` and is how one chat keeps
