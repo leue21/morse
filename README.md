@@ -557,6 +557,17 @@ refuses a name that is already taken in the target directory rather than
 writing over it — the filename came from whoever sent the file, and two people
 pick `report.pdf` independently all the time.
 
+## For AI agents
+
+morse is built to be called by a coding agent as readily as by a script: it
+needs no daemon, answers `morse capabilities --json` with every flag and limit
+even before it is configured, and keeps a long task to one status message with
+`--track`. An agent skill ships with the repository in
+[`.claude/skills/morse-notify/SKILL.md`](.claude/skills/morse-notify/SKILL.md):
+it tells an agent when to message you, how loudly, and how to keep a status
+line current or fetch something you sent the bot. Copy that directory into
+your agent's skills directory to make it available in every project.
+
 ## Asking what morse accepts
 
 ```sh

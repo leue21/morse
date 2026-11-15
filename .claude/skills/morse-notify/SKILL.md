@@ -1,142 +1,140 @@
 ---
 name: morse-notify
-description: Send a Telegram notification from the command line with the `morse` CLI. Use when the user asks to be notified, texted, pinged, or messaged about something — a long build finishing, a failing job, a result worth surfacing while they are away — or when a script or job needs to report to them.
+description: Send, update and read back Telegram messages with the `morse` CLI. Use when the user asks to be notified, texted, pinged or messaged — a long build or job finishing, a failure, a result worth seeing while they are away — when a long-running task should keep one status message current, when a script or job needs to report to them, or when they want something they sent to the bot (text, a key, a file) fetched into the terminal.
 ---
 
-# Sending a notification with morse
+# Telegram messages with morse
 
 `morse` sends one Telegram message and exits. The caller decides when there is
-something to say.
+something to say; morse delivers it, and never watches, polls or schedules.
 
-## Send
-
-```sh
-morse send "Backup failed" "rsync exit 23"       # title + body
-morse send --title "Backup failed" --body "$out" # named values for a script
-morse send "Deploy finished"                     # title only; body becomes "(no details)"
-morse send --silent "Nightly job ok" "412 files" # delivers without a sound
-tail -n 30 build.log | morse send "Build failed"  # body from stdin
-morse send --file report.pdf "Nightly report"    # upload a file
-```
-
-Rules that will bite you otherwise:
-
-- **Flags come before the title.** `morse send "title" --silent` is an error,
-  not a silent send — anything after the title would land in the message body.
-- When a script supplies variables, prefer `--title "$title" --body "$body"`.
-  Named values remain unambiguous when one starts with a dash or is empty.
-- The body is read from stdin only when something is actually piped in. At a
-  terminal, a title-only send returns immediately rather than hanging.
-- With no body argument *and* no pipe, a titled send still goes out.
-- Message text is sent as Telegram HTML and escaped for you — do not
-  pre-escape, and do not expect Markdown to render.
-- `--file <path>` uploads that file, with the title and body as its caption.
-  A caption holds 1024 characters (a message holds 4096) and morse trims the
-  body to fit; hand it a path, never file contents. Uploads over 50 MB are
-  refused before anything is sent.
-- Exit status is 0 on delivery, 1 on any failure (bad config, network,
-  Telegram rejection), 2 on an unknown command or no arguments. Errors go to
-  stderr and never contain the bot token.
-
-## Updating instead of sending again
-
-When something long-running reports repeatedly — progress, a job's state, a
-queue draining — keep one message current rather than adding a line to the chat
-each time:
-
-```sh
-morse send --track backup --silent "Backup" "0%"   # the same call
-morse send --track backup --silent "Backup" "40%"  # every time
-morse send --track backup --silent "Backup" "done — 3m21s"
-```
-
-- `--track <label>` makes the label stand for one line in the chat: sent the
-  first time, rewritten in place after. **Make the same call every time** — do
-  not branch on whether you have reported before, that is the point of it.
-- **A rewrite never notifies anyone.** That is the Bot API's behaviour, not a
-  flag. Only the first send can make a sound, so pass `--silent` there too if
-  even that is unwanted.
-- If the tracked message was deleted, the next `send --track` starts a new one
-  and repoints the label.
-- `--topic <id|name>` posts into one forum topic of the chat, so each app's
-  messages stay in their own thread; names come from `telegram.topics` in the
-  config. A label remembers its topic; pass the same `--topic` on every call,
-  since a different one starts a new message there.
-- `--reply-to <id|label>` attaches a message to an earlier one ("finished"
-  under "started"); `--pin` keeps a status at the top of its topic, pinned
-  once, when the message is new. `--no-preview` stops a URL becoming a card.
-- `--photo <path>` sends a screenshot or graph to be shown inline (10 MB max);
-  `--file` for anything that must arrive byte for byte.
-- `morse delete --track <label>` removes a finished status and forgets the
-  label.
-- For logs and stack traces, add `--code` (monospace block) and, for long
-  ones, `--collapse` (folded behind "show more"). On a tracked status, pass
-  them on every call: a rewrite without them drops the formatting.
-- `morse edit --track <label>` rewrites but *fails* if the label means nothing
-  yet — use it interactively, where a typo should say so; use `send --track` in
-  a script. `morse edit <id>` means that one message and never replaces it.
-- A tracked `--file` send is a new message each time; uploads cannot be
-  rewritten in place.
-- `morse send --json` prints the message id, for a caller that would rather
-  hold it than use a label: `id=$(morse send --json "Backup" "0%" | jq .message_id)`.
-- morse cannot tell you what a message currently says or whether it was read —
-  the Bot API has no way to ask. The label file is morse's own record of what
-  it last sent.
-- `--file` cannot be edited.
-- Reading the other direction is `morse receive`: `list` shows what was sent
-  *to* the bot (id first on each line, `--json` for one object per line), and
-  `get <id> [--save <dir>]` writes its text to stdout, or saves what it
-  carried into a directory (pipe the text to `wl-copy`/`pbcopy` for a
-  clipboard — morse does not reach one itself). The window is up to 100 of the
-  updates Telegram still holds, roughly a day's worth, counted from the oldest
-  it has not been told to forget; reading never consumes it. `list` warns on
-  stderr when the window came back full, because then newer messages may be
-  queued behind the ones shown. This is the command for "get me the file I just
-  sent you" — none of it says anything about a message morse itself sent.
-
-## Before sending: is it configured?
+## Before the first send: is it configured?
 
 ```sh
 morse capabilities --json
 ```
 
-It answers even when nothing is set up, so use it to check rather than sending
-a probe message. `.delivery.configured` is `false` when credentials are missing
-and `.config_error` says why; `.version` names the release, which `morse
-version` also prints on its own. `send`, `edit`, and `capabilities` accept
-`--config <path>` to read credentials from somewhere other than
-`~/.config/morse/config.yaml`; `version` requires no configuration.
+It answers even when nothing is set up, so check with it rather than sending a
+probe message. `.delivery.configured` is `false` when credentials are missing
+and `.config_error` says why. It also lists every flag and limit, so it is the
+authority if this page and the installed version disagree; `.version` names
+the release.
 
-Credentials come from that file or from `MORSE_BOT_TOKEN` / `MORSE_CHAT_ID`,
-which win over the file. In a container or under an agent, setting the two
-variables is the whole setup — never print or echo the token.
+Credentials come from `~/.config/morse/config.yaml`, or `MORSE_BOT_TOKEN` and
+`MORSE_CHAT_ID`, which win over the file — setting those two is the whole
+setup in a container or under an agent. Never print or echo the token.
+`--config <path>` reads another file.
+
+## Send
+
+```sh
+morse send "Backup failed" "rsync exit 23"        # title + body
+morse send --title "$title" --body "$body"        # named, for values from variables
+morse send --silent "Nightly ok" "412 files"      # delivered without a sound
+tail -n 40 build.log | morse send --code "Build failed"   # body from stdin, as code
+```
+
+Rules that bite:
+
+- **Flags come before the title.** `morse send "title" --silent` is an error,
+  not a silent send.
+- Prefer `--title`/`--body` when values come from variables: they stay
+  unambiguous when one is empty or starts with a dash.
+- The body is read from stdin only when something is piped in. With no body
+  and no pipe, a titled send still goes out, with "(no details)".
+- Text is sent as Telegram HTML and escaped for you — do not pre-escape, and do
+  not expect Markdown to render. It is trimmed to fit (4096 characters, 1024
+  for a file caption); the body gives way before the title.
+- Exit status: 0 delivered, 1 failed, 2 unknown command. Errors go to stderr
+  and never contain the token. If Telegram says "too many requests", morse
+  already waited and retried once — do not wrap it in a retry loop.
+
+## How it looks
+
+- `--code` shows the body as a monospace block: use it for logs, stack traces,
+  command output. `--collapse` folds a long body behind "show more". Both
+  together suit a journal excerpt.
+- `--no-preview` stops the first URL becoming a large preview card.
+- `--photo <path>` shows a screenshot or graph inline (10 MB max). `--file
+  <path>` uploads anything as a document (50 MB max). Hand either a path, never
+  file contents; the title and body become the caption.
+
+## Where it goes
+
+- `--topic <id|name>` posts into one forum topic of the chat, so each app keeps
+  its own thread. Names come from `telegram.topics` in the config; an unknown
+  name is refused, never sent to General. `morse topic create <name>` makes a
+  topic and prints its id (the bot needs the right to manage topics).
+- `--reply-to <id|label>` attaches the message to an earlier one, so "finished"
+  sits under "started". A number is an id; anything else is a `--track` label.
+- `--pin` pins the message silently. If pinning is refused the message was
+  still delivered — the exit status is 1 and stderr says it was not pinned.
+
+## Long-running work: one status line, not fifty messages
+
+```sh
+morse send --track deploy --silent "Deploy" "● 1/5 hosts"   # the same call
+morse send --track deploy --silent "Deploy" "● 3/5 hosts"   # every time
+morse send --track deploy --silent "Deploy" "✓ done in 4m"
+```
+
+- `--track <label>` makes the label stand for one message: sent the first
+  time, edited in place after, re-sent if someone deleted it. **Make the same
+  call every time**; never branch on whether you have reported before.
+- An edit never notifies anyone — that is Telegram, not a flag. Only the first
+  send can make a sound, so pass `--silent` if even that is unwanted.
+- Pass the same `--topic`, `--code`, `--collapse` and `--no-preview` on every
+  call: a different topic starts a new message there, and a rewrite without the
+  formatting flags drops the formatting. `--pin` pins only when the message is
+  new, so it is safe to pass every time.
+- An upload (`--file`, `--photo`) cannot be edited, so a tracked upload is a
+  new message each time.
+- `morse delete --track <label>` removes the status when it is no longer
+  useful, and forgets the label. `morse delete <id>...` removes by id.
+- `morse edit --track <label> ...` rewrites but fails if the label means
+  nothing yet — for interactive use, where a typo should say so. In scripts,
+  use `send --track`. `--json` on send or edit prints the message id.
+- morse cannot tell what a message says now or whether it was read; the Bot API
+  has no way to ask. The label file is only morse's record of what it did.
+
+## Reading back what the user sent
+
+```sh
+morse receive list                 # newest first, message id first on each line
+morse receive get 481              # its text on stdout, no trailing newline
+morse receive get 481 --save ~/Downloads   # the file it carried
+```
+
+This is for "get me the file / key / command I just sent the bot". It shows
+only messages sent *to* the bot — never morse's own notifications. The window
+is what Telegram still holds: up to 100 updates, roughly a day. An edited
+message shows its current text; `--json` gives one object per line. Reading
+never consumes anything. To put text on a clipboard, pipe `get` to `wl-copy`,
+`xclip` or `pbcopy`; morse does not reach for one.
 
 ## Choosing how to send
 
-- **Routine facts** — a job succeeded, a nightly finished — use `--silent`.
-  Buzzing for these trains the reader to mute the chat, which costs the
-  messages that matter.
-- **Something is wrong or waiting on the user** — send loud (no flag).
-- Put the *what* in the title and the evidence in the body. Titles are what
-  gets read on a lock screen; bodies are for the log tail, the exit code, the
-  diff stat.
-- Send once per event. A loop that notifies per iteration is a job that should
-  decide first and speak once — or one that should `send --track` every time,
-  so the chat keeps one current line instead of a history.
+- **Routine facts** — a job succeeded, a nightly finished: `--silent`, and
+  `--track` if the same thing reports repeatedly. Buzzing for these trains the
+  reader to mute the chat, which costs the messages that matter.
+- **Something is wrong, or waiting on the user**: loud (no `--silent`), its own
+  message (no `--track`).
+- The *what* goes in the title — it is what a lock screen shows. The evidence
+  goes in the body: the log tail, the exit code, the diff stat.
+- Send once per event. A loop that notifies per iteration should either decide
+  first and speak once, or `send --track` so the chat keeps one current line.
 
 ## Do not
 
-- Send on the user's behalf to announce your own progress unless they asked to
-  be notified — a message goes to their phone.
-- Build watching, polling, or scheduling into morse. morse sends one message and
-  exits; deciding *when* there is something to say belongs to the caller.
+- Message the user to announce your own progress unless they asked to be
+  notified — it goes to their phone.
+- Build watching, polling or scheduling into morse, or loop on `morse receive`.
+  Deciding *when* to speak belongs to the caller.
 
 ## Calling it from a script
 
-The caller decides there is something to report, then hands morse the text:
-
 ```sh
 if ! out=$(rsync -a "$src" "$dst" 2>&1); then
-    morse send "Backup failed" "$out"
+    printf '%s\n' "$out" | tail -n 40 | morse send --code --collapse "Backup failed"
 fi
 ```
