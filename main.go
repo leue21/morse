@@ -80,6 +80,9 @@ func usage(out io.Writer) {
 usage:
   morse send [--silent] [--file path] <title> [body]
                               send a message; body may come from stdin
+  morse send --topic <id> <title> [body]
+                              post into one forum topic of the chat — one
+                              topic per app keeps their messages apart
   morse send --title <t> --body <b>
                               the same, named rather than positional
   morse send --track <label> [--json] <title> [body]
@@ -147,14 +150,14 @@ func (f *messageFlags) message(args []string, haveFile bool) (title, body string
 // The message has gone out by the time any of this runs, so a failure here is
 // reported as what it is — the bookkeeping failed — rather than as a message
 // that was never sent.
-func (f *messageFlags) done(out io.Writer, messageID, chatID int64, title, body string) error {
+func (f *messageFlags) done(out io.Writer, messageID, chatID, topic int64, title, body string) error {
 	if *f.label != "" {
 		if messageID == 0 {
 			// Writing the label down anyway would point it at nothing, and the
 			// failure would surface later as an edit that cannot be explained.
 			return fmt.Errorf("message delivered, but telegram did not report its id; --track %s not recorded", *f.label)
 		}
-		if err := remember(*f.label, messageID, chatID, title, body); err != nil {
+		if err := remember(*f.label, messageID, chatID, topic, title, body); err != nil {
 			return err
 		}
 	}
@@ -162,8 +165,9 @@ func (f *messageFlags) done(out io.Writer, messageID, chatID int64, title, body 
 		return writeJSON(out, struct {
 			MessageID int64  `json:"message_id"`
 			ChatID    int64  `json:"chat_id"`
+			Topic     int64  `json:"topic,omitempty"`
 			Track     string `json:"track,omitempty"`
-		}{messageID, chatID, *f.label})
+		}{messageID, chatID, topic, *f.label})
 	}
 	return nil
 }
@@ -181,9 +185,14 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	f := newMessageFlags("send", defaultConfig, "keep the message under this label current: sent the first time, rewritten after")
 	silent := f.fs.Bool("silent", false, "deliver without a notification sound")
 	file := f.fs.String("file", "", "upload this file, with the title and body as its caption")
+	topic := f.fs.Int64("topic", 0, "post into this forum topic of the chat (its message_thread_id)")
 	if err := f.fs.Parse(args); err != nil {
 		return err
 	}
+	if *topic < 0 {
+		return fmt.Errorf("--topic %d is not a topic id; it is the number at the end of a link to the topic", *topic)
+	}
+	opts := notifier.SendOptions{Silent: *silent, Topic: *topic}
 	// A file is something to send in its own right, so a bare `morse send
 	// --file report.pdf` is a complete instruction and needs no title.
 	title, body, err := f.message(f.fs.Args(), *file != "")
@@ -201,7 +210,7 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	// each time, and the label follows it.
 	var tracked int64
 	if *f.label != "" && *file == "" {
-		if tracked, err = trackedID(*f.label); err != nil {
+		if tracked, err = trackedID(*f.label, *topic); err != nil {
 			return err
 		}
 	}
@@ -210,17 +219,17 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	switch {
 	case tracked != 0:
 		messageID, err = editMessage(ctx, tg, tracked, title, body, func() (int64, error) {
-			return tg.Send(ctx, title, body, *silent)
+			return tg.Send(ctx, title, body, opts)
 		})
 	case *file != "":
-		messageID, err = tg.SendDocument(ctx, *file, title, body, *silent)
+		messageID, err = tg.SendDocument(ctx, *file, title, body, opts)
 	default:
-		messageID, err = tg.Send(ctx, title, body, *silent)
+		messageID, err = tg.Send(ctx, title, body, opts)
 	}
 	if err != nil {
-		return err
+		return explainTopic(err, *topic)
 	}
-	return f.done(out, messageID, cfg.Telegram.ChatID, title, body)
+	return f.done(out, messageID, cfg.Telegram.ChatID, *topic, title, body)
 }
 
 // editMessage rewrites a message and reports which message ended up carrying the
@@ -246,6 +255,17 @@ func editMessage(ctx context.Context, tg *notifier.Telegram, messageID int64, ti
 	return messageID, nil
 }
 
+// explainTopic says what a refused topic means. Telegram's own words name no
+// number, and the two usual causes — a chat without topics, and the General
+// topic, which is the chat itself and has no id to pass — both look like a
+// correct id from the caller's side.
+func explainTopic(err error, topic int64) error {
+	if errors.Is(err, notifier.ErrNoSuchTopic) {
+		return fmt.Errorf("%w: this chat has no topic %d. Topics need a group with them turned on, the id is the number at the end of a link to the topic, and the General topic takes no --topic at all", notifier.ErrNoSuchTopic, topic)
+	}
+	return err
+}
+
 // cmdEdit rewrites a message morse already sent.
 //
 // Telegram never notifies anyone about an edit — no sound, no banner, nothing
@@ -258,7 +278,7 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 		return err
 	}
 
-	messageID, rest, err := editTarget(f.fs.Args(), *f.label)
+	messageID, topic, rest, err := editTarget(f.fs.Args(), *f.label)
 	if err != nil {
 		return err
 	}
@@ -277,16 +297,19 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	// deleting a single message would silence the job behind it for good, and
 	// the message a reader is meant to interact with is exactly the one that
 	// gets deleted. The replacement goes out silently, since the caller asked
-	// to edit and an edit never notifies.
+	// to edit and an edit never notifies, and into the topic the old one was
+	// in, since that is where a reader would look for it.
 	var resend func() (int64, error)
 	if *f.label != "" {
-		resend = func() (int64, error) { return tg.Send(ctx, title, body, true) }
+		resend = func() (int64, error) {
+			return tg.Send(ctx, title, body, notifier.SendOptions{Silent: true, Topic: topic})
+		}
 	}
 	messageID, err = editMessage(ctx, tg, messageID, title, body, resend)
 	if err != nil {
-		return err
+		return explainTopic(err, topic)
 	}
-	return f.done(out, messageID, cfg.Telegram.ChatID, title, body)
+	return f.done(out, messageID, cfg.Telegram.ChatID, topic, title, body)
 }
 
 // editTarget works out which message an edit is about, and what is left over to
@@ -297,26 +320,29 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 // number too — "42 files copied" is a perfectly good body — so there is no
 // second place to look, and a first argument that is not a number is a mistake
 // worth naming rather than a title to send.
-func editTarget(args []string, label string) (messageID int64, rest []string, err error) {
+//
+// The topic comes along with a label, since the record knows it; an explicit
+// id has none, and needs none, because an edit happens wherever the message is.
+func editTarget(args []string, label string) (messageID, topic int64, rest []string, err error) {
 	if label != "" {
 		rec, err := recall(label)
 		if err != nil {
-			return 0, nil, err
+			return 0, 0, nil, err
 		}
-		return rec.MessageID, args, nil
+		return rec.MessageID, rec.Topic, args, nil
 	}
 	if len(args) == 0 {
-		return 0, nil, errors.New("edit needs a message id, or --track <label>")
+		return 0, 0, nil, errors.New("edit needs a message id, or --track <label>")
 	}
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
-		return 0, nil, fmt.Errorf("%q is not a message id; pass one from `morse send --json`, or name the message with --track", args[0])
+		return 0, 0, nil, fmt.Errorf("%q is not a message id; pass one from `morse send --json`, or name the message with --track", args[0])
 	}
-	return id, args[1:], nil
+	return id, 0, args[1:], nil
 }
 
 // remember writes down which message a label now stands for.
-func remember(label string, messageID, chatID int64, title, body string) error {
+func remember(label string, messageID, chatID, topic int64, title, body string) error {
 	dir, err := track.Dir()
 	if err != nil {
 		return err
@@ -325,6 +351,7 @@ func remember(label string, messageID, chatID int64, title, body string) error {
 		Label:     label,
 		MessageID: messageID,
 		ChatID:    chatID,
+		Topic:     topic,
 		Text:      strings.TrimSpace(title + "\n" + body),
 		UpdatedAt: time.Now(),
 	})
@@ -348,7 +375,12 @@ func recall(label string) (*track.Record, error) {
 // 0 for a label morse has not seen. A label with no message yet is not a
 // problem to report but a message to send: it is what every label looks like
 // the first time, and what one looks like again after its state file is lost.
-func trackedID(label string) (int64, error) {
+//
+// A label whose message lives in another topic is reported as 0 too. A message
+// cannot be moved between topics, so rewriting it would keep reporting where
+// the caller has stopped asking for it; a fresh one where it asked is what the
+// call means, and the label follows it there.
+func trackedID(label string, topic int64) (int64, error) {
 	dir, err := track.Dir()
 	if err != nil {
 		return 0, err
@@ -359,6 +391,8 @@ func trackedID(label string) (int64, error) {
 		return 0, nil
 	case err != nil:
 		return 0, err
+	case rec.Topic != topic:
+		return 0, nil
 	}
 	return rec.MessageID, nil
 }

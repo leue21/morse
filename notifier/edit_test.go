@@ -21,7 +21,7 @@ func TestSendReportsTheMessageID(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	id, err := tg.Send(context.Background(), "Title", "Body", false)
+	id, err := tg.Send(context.Background(), "Title", "Body", SendOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestSendWithoutAMessageIDStillSucceeds(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	id, err := tg.Send(context.Background(), "Title", "Body", false)
+	id, err := tg.Send(context.Background(), "Title", "Body", SendOptions{})
 	if err != nil || id != 0 {
 		t.Fatalf("got (%d, %v), want (0, nil)", id, err)
 	}

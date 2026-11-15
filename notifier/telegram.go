@@ -52,7 +52,35 @@ var (
 	// The fix is specific enough to be worth naming — delete the webhook — and
 	// a bare conflict does not say which conflict it was.
 	ErrWebhookSet = errors.New("the bot has a webhook set")
+
+	// ErrNoSuchTopic reports a topic id the chat does not have: a typo, a
+	// deleted topic, or a chat that is not a forum at all. It is named because
+	// Telegram's own wording does not say which number it could not find.
+	ErrNoSuchTopic = errors.New("topic not found")
 )
+
+// SendOptions is how a new message is delivered, as opposed to what it says.
+type SendOptions struct {
+	// Silent maps to disable_notification: the message arrives without a
+	// sound, and stays in the chat all the same.
+	Silent bool
+	// Topic is the forum topic to post into — Telegram's message_thread_id —
+	// or 0 for the chat itself. A chat with topics turned on is how one chat
+	// keeps several senders apart: each gets its own thread, with its own
+	// unread count and its own mute, in every Telegram client.
+	Topic int64
+}
+
+// apply adds the options to a request, in the form the Bot API takes them.
+// The topic is left out entirely when there is none, rather than sent as 0,
+// because 0 is not a topic and Telegram is under no obligation to read it as
+// "none".
+func (o SendOptions) apply(set func(name string, value any)) {
+	set("disable_notification", o.Silent)
+	if o.Topic != 0 {
+		set("message_thread_id", o.Topic)
+	}
+}
 
 // Telegram sends messages via the Telegram Bot API.
 type Telegram struct {
@@ -78,7 +106,7 @@ func NewTelegram(botToken string, chatID int64) *Telegram {
 // It reports the id of the message it sent, so a caller that wants to come back
 // and edit it later has something to refer to; nothing else can name a message
 // after the fact, since the Bot API has no way to look one up.
-func (t *Telegram) Send(ctx context.Context, title, message string, silent bool) (int64, error) {
+func (t *Telegram) Send(ctx context.Context, title, message string, opts SendOptions) (int64, error) {
 	// HTML rather than MarkdownV2: Telegram's HTML mode reserves only <, > and
 	// &, which stdlib escapes correctly, where MarkdownV2 reserves twenty-odd
 	// characters that a hand-written escaper has to track. An excerpt full of
@@ -86,11 +114,11 @@ func (t *Telegram) Send(ctx context.Context, title, message string, silent bool)
 	// missed character makes the API reject the whole message — losing the
 	// alert entirely.
 	payload := map[string]any{
-		"chat_id":              t.chatID,
-		"text":                 caption(title, message, messageLimit),
-		"parse_mode":           "HTML",
-		"disable_notification": silent,
+		"chat_id":    t.chatID,
+		"text":       caption(title, message, messageLimit),
+		"parse_mode": "HTML",
 	}
+	opts.apply(func(name string, value any) { payload[name] = value })
 
 	return t.postJSON(ctx, "sendMessage", payload)
 }
@@ -141,7 +169,7 @@ func (t *Telegram) callJSON(ctx context.Context, method string, payload map[stri
 // plain message would carry. A log excerpt survives a pipe, but an archive or a
 // binary does not, and asking the reader to go and fetch it defeats the point of
 // telling them at all.
-func (t *Telegram) SendDocument(ctx context.Context, path, title, message string, silent bool) (int64, error) {
+func (t *Telegram) SendDocument(ctx context.Context, path, title, message string, opts SendOptions) (int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return 0, fmt.Errorf("opening file: %w", err)
@@ -167,10 +195,10 @@ func (t *Telegram) SendDocument(ctx context.Context, path, title, message string
 	var buf bytes.Buffer
 	form := multipart.NewWriter(&buf)
 	fields := map[string]string{
-		"chat_id":              strconv.FormatInt(t.chatID, 10),
-		"parse_mode":           "HTML",
-		"disable_notification": strconv.FormatBool(silent),
+		"chat_id":    strconv.FormatInt(t.chatID, 10),
+		"parse_mode": "HTML",
 	}
+	opts.apply(func(name string, value any) { fields[name] = fmt.Sprint(value) })
 	// An empty caption field is not the same as no caption: Telegram would
 	// render the bold title of a message that has none.
 	if text := caption(title, message, captionLimit); text != "" {
@@ -280,6 +308,7 @@ func refusal(description string) error {
 		{"file not found", ErrNoSuchFile},
 		{"wrong file_id", ErrNoSuchFile},
 		{"can't use getUpdates method while webhook is active", ErrWebhookSet},
+		{"message thread not found", ErrNoSuchTopic},
 	} {
 		if strings.Contains(description, known.phrase) {
 			return known.sentinel

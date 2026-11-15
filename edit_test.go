@@ -2,14 +2,16 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"morse/notifier"
 	"morse/track"
 )
 
 func TestEditTargetFromAnExplicitID(t *testing.T) {
-	id, rest, err := editTarget([]string{"4242", "Backup", "42", "files copied"}, "")
+	id, _, rest, err := editTarget([]string{"4242", "Backup", "42", "files copied"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,14 +26,14 @@ func TestEditTargetFromAnExplicitID(t *testing.T) {
 
 // Silently treating it as a title would edit nothing and report success.
 func TestEditTargetRejectsAnIDThatIsNotOne(t *testing.T) {
-	_, _, err := editTarget([]string{"Backup", "done"}, "")
+	_, _, _, err := editTarget([]string{"Backup", "done"}, "")
 	if err == nil || !strings.Contains(err.Error(), "is not a message id") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestEditTargetNeedsSomethingToEdit(t *testing.T) {
-	_, _, err := editTarget(nil, "")
+	_, _, _, err := editTarget(nil, "")
 	if err == nil || !strings.Contains(err.Error(), "message id") {
 		t.Fatalf("err = %v", err)
 	}
@@ -42,11 +44,11 @@ func TestEditTargetNeedsSomethingToEdit(t *testing.T) {
 func TestEditTargetFromALabel(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
-	if err := remember("nightly-backup", 77, 42, "Nightly backup", "running"); err != nil {
+	if err := remember("nightly-backup", 77, 42, 0, "Nightly backup", "running"); err != nil {
 		t.Fatal(err)
 	}
 
-	id, rest, err := editTarget([]string{"3", "files", "copied"}, "nightly-backup")
+	id, _, rest, err := editTarget([]string{"3", "files", "copied"}, "nightly-backup")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +64,7 @@ func TestEditTargetFromALabel(t *testing.T) {
 // to do instead of leaving the caller to guess.
 func TestEditTargetFromALabelThatWasNeverSent(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	_, _, err := editTarget([]string{"Title"}, "nightly-backup")
+	_, _, _, err := editTarget([]string{"Title"}, "nightly-backup")
 	if !errors.Is(err, track.ErrNoSuchLabel) {
 		t.Fatalf("err = %v, want ErrNoSuchLabel", err)
 	}
@@ -76,7 +78,7 @@ func TestEditTargetFromALabelThatWasNeverSent(t *testing.T) {
 // a lost state file both look like.
 func TestTrackedIDOfAnUnknownLabelIsNotAnError(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	id, err := trackedID("never-sent")
+	id, err := trackedID("never-sent", 0)
 	if err != nil || id != 0 {
 		t.Fatalf("got (%d, %v), want (0, nil)", id, err)
 	}
@@ -84,10 +86,10 @@ func TestTrackedIDOfAnUnknownLabelIsNotAnError(t *testing.T) {
 
 func TestTrackedIDFindsAKnownLabel(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	if err := remember("nightly-backup", 77, 42, "Nightly backup", "running"); err != nil {
+	if err := remember("nightly-backup", 77, 42, 0, "Nightly backup", "running"); err != nil {
 		t.Fatal(err)
 	}
-	id, err := trackedID("nightly-backup")
+	id, err := trackedID("nightly-backup", 0)
 	if err != nil || id != 77 {
 		t.Fatalf("got (%d, %v), want (77, nil)", id, err)
 	}
@@ -98,7 +100,7 @@ func TestTrackedIDFindsAKnownLabel(t *testing.T) {
 // caller did not ask for.
 func TestTrackedIDStillRefusesALabelThatIsNotAName(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	if _, err := trackedID("../../.ssh/config"); err == nil {
+	if _, err := trackedID("../../.ssh/config", 0); err == nil {
 		t.Fatal("expected a refusal")
 	}
 }
@@ -108,7 +110,7 @@ func TestTrackedIDStillRefusesALabelThatIsNotAName(t *testing.T) {
 func TestRememberRecordsTheMessage(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
-	if err := remember("nightly", 5, 42, "Backup", "done"); err != nil {
+	if err := remember("nightly", 5, 42, 0, "Backup", "done"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,5 +126,51 @@ func TestRememberRecordsTheMessage(t *testing.T) {
 	}
 	if rec.UpdatedAt.IsZero() {
 		t.Error("updated_at is zero")
+	}
+}
+
+// A message cannot move between topics, so a label asked to report somewhere
+// new starts a new message there instead of rewriting the old one where
+// nobody is looking any more.
+func TestTrackedIDInAnotherTopicStartsANewMessage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := remember("nightly-backup", 77, 42, 7, "Nightly backup", "running"); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := trackedID("nightly-backup", 7); err != nil || id != 77 {
+		t.Fatalf("same topic: got (%d, %v), want (77, nil)", id, err)
+	}
+	if id, err := trackedID("nightly-backup", 9); err != nil || id != 0 {
+		t.Fatalf("other topic: got (%d, %v), want (0, nil)", id, err)
+	}
+	if id, err := trackedID("nightly-backup", 0); err != nil || id != 0 {
+		t.Fatalf("no topic: got (%d, %v), want (0, nil)", id, err)
+	}
+}
+
+// `edit --track` takes no --topic, so the record is the only thing that can say
+// where a replacement for a deleted message belongs.
+func TestEditTargetCarriesTheLabelsTopic(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := remember("nightly-backup", 77, 42, 7, "Nightly backup", "running"); err != nil {
+		t.Fatal(err)
+	}
+	id, topic, _, err := editTarget([]string{"done"}, "nightly-backup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 77 || topic != 7 {
+		t.Errorf("got message %d in topic %d, want 77 in 7", id, topic)
+	}
+}
+
+func TestExplainTopicNamesTheTopic(t *testing.T) {
+	err := explainTopic(fmt.Errorf("sending: %w", notifier.ErrNoSuchTopic), 999)
+	if !errors.Is(err, notifier.ErrNoSuchTopic) || !strings.Contains(err.Error(), "topic 999") {
+		t.Errorf("err = %v", err)
+	}
+	other := errors.New("network down")
+	if explainTopic(other, 999) != other {
+		t.Error("an unrelated error was rewritten")
 	}
 }

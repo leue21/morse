@@ -39,6 +39,7 @@ type SendContract struct {
 	BodyStdin bool   `json:"body_from_stdin"`
 	File      string `json:"file"`
 	Track     string `json:"track"`
+	Topic     string `json:"topic"`
 	JSON      string `json:"json"`
 }
 
@@ -94,6 +95,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			BodyStdin: true,
 			File:      "--file uploads that file, with the title and body as its caption; at most 50 MB",
 			Track:     "--track <label> keeps one message current under that label: sent the first time, rewritten in place every time after, so a caller makes the same call whether or not it has reported before. Rewrites never notify",
+			Topic:     "--topic <id> posts into that forum topic of the chat (telegram's message_thread_id), so each sender keeps its own thread; the General topic takes none. A --track label remembers its topic, and a different --topic starts a new message there",
 			JSON:      "--json prints the message id as JSON, for a caller that would rather hold the id itself than use a label",
 		},
 		Edit: EditContract{
@@ -106,7 +108,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 		Receive: ReceiveContract{
 			Usage:  "morse receive list [--json] [--limit n]  |  morse receive get <message_id> [--save dir]",
 			Window: "what the bot can see is up to 100 of the updates telegram still holds, roughly a day's worth; there is no Bot API method that reads a chat's history, and morse keeps no archive of its own. Reading never consumes: morse sends no offset at all, since a positive one deletes every update below it and a negative one forgets everything before the window — both for every reader of the bot, not just morse. The cost is that a backlog longer than the window comes back oldest first, hiding newer messages behind it; list says so on stderr when it happens. morse also never sends allowed_updates, which telegram would remember and apply to every other client polling this bot",
-			JSON:   "--json prints one JSON object per line — message_id, chat_id, date, from, text, file — for jq or a picker",
+			JSON:   "--json prints one JSON object per line — message_id, chat_id, topic, date, from, text, file — for jq or a picker",
 			Text:   "get writes the message's text to stdout exactly, with no trailing newline of its own, so where it ends up is the caller's business; a clipboard is one pipe away and is not something morse reaches for you",
 			Save:   "--save <dir> downloads what the message carried into that directory and prints the path; a bot may download at most 20 MB, and a filename already taken in that directory is refused rather than overwritten",
 			Pick:   "choosing a message is a fuzzy finder's job: `list` prints the id first on every line, so `morse receive list | fzf | cut -d' ' -f1 | xargs morse receive get` is the whole integration",
@@ -141,7 +143,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 		lines []string
 	}{
 		{"send", []string{caps.Send.Usage, caps.Send.Named, caps.Send.Silent, caps.Send.File,
-			caps.Send.Track, caps.Send.JSON,
+			caps.Send.Track, caps.Send.Topic, caps.Send.JSON,
 			"the body is read from stdin when no body argument is given"}},
 		{"edit", []string{caps.Edit.Usage, caps.Edit.Track, caps.Edit.JSON, caps.Edit.Silent, caps.Edit.State}},
 		{"receive", []string{caps.Receive.Usage, caps.Receive.Window, caps.Receive.JSON,
