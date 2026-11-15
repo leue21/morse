@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"morse/notifier"
-	"morse/track"
+	"github.com/leue21/morse/notifier"
+	"github.com/leue21/morse/track"
 )
 
 func TestEditTargetFromAnExplicitID(t *testing.T) {

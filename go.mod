@@ -1,4 +1,4 @@
-module morse
+module github.com/leue21/morse
 
 go 1.25.7
 

@@ -13,8 +13,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"morse/config"
-	"morse/notifier"
+	"github.com/leue21/morse/config"
+	"github.com/leue21/morse/notifier"
 )
 
 // cmdReceive reads the chat back: what the bot can currently see, and what one

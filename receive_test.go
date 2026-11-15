@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"morse/notifier"
+	"github.com/leue21/morse/notifier"
 )
 
 func TestSummary(t *testing.T) {
