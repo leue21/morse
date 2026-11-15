@@ -80,7 +80,10 @@ whether it was read, so a record only ever says what morse itself last did.
 - A `--track` record keeps its topic, because `edit --track` takes no `--topic`
   and the record is the only thing that knows where a replacement belongs. A
   message cannot move between topics, so `send --track` with a different topic
-  than the record's starts a new message there rather than rewriting the old one
+  than the record's starts a new message there rather than rewriting the old one.
+  The same goes for the chat: a message id is only unique within its chat, so a
+  record from another chat is treated as unknown by `send --track`, and refused
+  by `edit --track`, rather than editing whatever carries that id in the new one
 - In `receive`, `message_thread_id` is a topic only when `is_topic_message` is
   set: Telegram also sets it on a plain reply, naming the reply thread
 - An edit never notifies, by API behaviour rather than by flag, so `morse edit`
