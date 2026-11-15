@@ -54,7 +54,7 @@ func TestEditRewritesTheNamedMessage(t *testing.T) {
 	tg := NewTelegram("tok", 42)
 	tg.baseURL = srv.URL()
 
-	if err := tg.Edit(context.Background(), 7, "Nightly backup", "done: 412 files"); err != nil {
+	if err := tg.Edit(context.Background(), 7, "Nightly backup", "done: 412 files", Format{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,7 +89,7 @@ func TestEditOfUnchangedTextReportsWhy(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	err := tg.Edit(context.Background(), 7, "Title", "same")
+	err := tg.Edit(context.Background(), 7, "Title", "same", Format{})
 	if !errors.Is(err, ErrNotModified) {
 		t.Fatalf("err = %v, want ErrNotModified", err)
 	}
@@ -107,7 +107,7 @@ func TestEditOfAnUneditableMessageIsNotMistakenForAMissingOne(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	err := tg.Edit(context.Background(), 7, "Title", "Body")
+	err := tg.Edit(context.Background(), 7, "Title", "Body", Format{})
 	if err == nil || errors.Is(err, ErrMessageGone) || errors.Is(err, ErrNotModified) {
 		t.Fatalf("err = %v, want a plain failure", err)
 	}
@@ -124,7 +124,7 @@ func TestEditOfADeletedMessageReportsItIsGone(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	err := tg.Edit(context.Background(), 7, "Title", "Body")
+	err := tg.Edit(context.Background(), 7, "Title", "Body", Format{})
 	if !errors.Is(err, ErrMessageGone) {
 		t.Fatalf("err = %v, want ErrMessageGone", err)
 	}
@@ -139,7 +139,7 @@ func TestEditOtherFailuresAreNotMistakenForAMissingMessage(t *testing.T) {
 	tg := NewTelegram("tok", 1)
 	tg.baseURL = srv.URL()
 
-	err := tg.Edit(context.Background(), 7, "Title", "Body")
+	err := tg.Edit(context.Background(), 7, "Title", "Body", Format{})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -152,7 +152,7 @@ func TestEditNetworkErrorDoesNotLeakTheToken(t *testing.T) {
 	tg := NewTelegram("s3cr3t-token", 1)
 	tg.baseURL = "http://127.0.0.1:1" // nothing listening
 
-	err := tg.Edit(context.Background(), 7, "Title", "Body")
+	err := tg.Edit(context.Background(), 7, "Title", "Body", Format{})
 	if err == nil {
 		t.Fatal("expected an error")
 	}

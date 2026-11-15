@@ -57,6 +57,11 @@ var (
 	// deleted topic, or a chat that is not a forum at all. It is named because
 	// Telegram's own wording does not say which number it could not find.
 	ErrNoSuchTopic = errors.New("topic not found")
+
+	// ErrNoRights reports that the bot is in the chat but lacks the admin
+	// right a call needs. Telegram names the action but not the right, so the
+	// caller, which knows what it was trying to do, says which switch to flip.
+	ErrNoRights = errors.New("the bot lacks the rights for this")
 )
 
 // SendOptions is how a new message is delivered, as opposed to what it says.
@@ -69,6 +74,39 @@ type SendOptions struct {
 	// keeps several senders apart: each gets its own thread, with its own
 	// unread count and its own mute, in every Telegram client.
 	Topic int64
+	// Format is how the body is shown.
+	Format Format
+}
+
+// Format is how a message's body is shown, as opposed to what it says. It is
+// separate from SendOptions because an edit has to be told it too: a rewrite
+// replaces the markup along with the text, so a body sent as code and edited
+// without it would lose its formatting.
+type Format struct {
+	// Code shows the body in monospace, as a preformatted block. Most of what
+	// morse carries is a log excerpt or a stack trace, whose columns and
+	// indentation mean something and are lost in a proportional font.
+	Code bool
+	// Collapse folds the body into an expandable quote: a few lines and a
+	// "show more". A journal excerpt is worth having in the chat and not worth
+	// scrolling past every time.
+	Collapse bool
+}
+
+// wrap puts the body's markup around text that is already escaped. The tags
+// are not counted against Telegram's limit — it counts the text once entities
+// are parsed out — so wrapping after truncation costs nothing. Telegram accepts
+// a preformatted block inside an expandable quote, and that is the nesting
+// used when both are asked for: the quote is what folds, the block is what it
+// holds.
+func (f Format) wrap(escaped string) string {
+	if f.Code {
+		escaped = "<pre>" + escaped + "</pre>"
+	}
+	if f.Collapse {
+		escaped = "<blockquote expandable>" + escaped + "</blockquote>"
+	}
+	return escaped
 }
 
 // apply adds the options to a request, in the form the Bot API takes them.
@@ -115,7 +153,7 @@ func (t *Telegram) Send(ctx context.Context, title, message string, opts SendOpt
 	// alert entirely.
 	payload := map[string]any{
 		"chat_id":    t.chatID,
-		"text":       caption(title, message, messageLimit),
+		"text":       caption(title, message, messageLimit, opts.Format),
 		"parse_mode": "HTML",
 	}
 	opts.apply(func(name string, value any) { payload[name] = value })
@@ -133,16 +171,42 @@ func (t *Telegram) Send(ctx context.Context, title, message string, opts SendOpt
 // A refusal is reported as it came: ErrNotModified and ErrMessageGone say what
 // Telegram objected to, and what should happen about it is the caller's to
 // decide.
-func (t *Telegram) Edit(ctx context.Context, messageID int64, title, message string) error {
+func (t *Telegram) Edit(ctx context.Context, messageID int64, title, message string, format Format) error {
 	payload := map[string]any{
 		"chat_id":    t.chatID,
 		"message_id": messageID,
-		"text":       caption(title, message, messageLimit),
+		"text":       caption(title, message, messageLimit, format),
 		"parse_mode": "HTML",
 	}
 
 	_, err := t.postJSON(ctx, "editMessageText", payload)
 	return err
+}
+
+// CreateTopic opens a new forum topic in the chat and reports its id — the
+// number every later message to it has to carry.
+//
+// A bot cannot list a chat's topics, and only learns one exists if it is in
+// the chat, with rights to see it, when the topic is made. Making the topic
+// itself is the one way a bot is guaranteed to know the id.
+func (t *Telegram) CreateTopic(ctx context.Context, name string) (int64, error) {
+	result, err := t.callJSON(ctx, "createForumTopic", map[string]any{
+		"chat_id": t.chatID,
+		"name":    name,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("creating topic: %w", err)
+	}
+	var topic struct {
+		ThreadID int64 `json:"message_thread_id"`
+	}
+	if err := json.Unmarshal(result, &topic); err != nil || topic.ThreadID == 0 {
+		// Unlike a message id, this one is the whole point of the call: a
+		// topic created without its id being reported is a topic nobody can
+		// post to without going and finding it by hand.
+		return 0, errors.New("creating topic: telegram did not report the topic's id")
+	}
+	return topic.ThreadID, nil
 }
 
 // postJSON sends one JSON request to a Bot API method, and reads the message id
@@ -201,7 +265,7 @@ func (t *Telegram) SendDocument(ctx context.Context, path, title, message string
 	opts.apply(func(name string, value any) { fields[name] = fmt.Sprint(value) })
 	// An empty caption field is not the same as no caption: Telegram would
 	// render the bold title of a message that has none.
-	if text := caption(title, message, captionLimit); text != "" {
+	if text := caption(title, message, captionLimit, opts.Format); text != "" {
 		fields["caption"] = text
 	}
 	for name, value := range fields {
@@ -309,6 +373,7 @@ func refusal(description string) error {
 		{"wrong file_id", ErrNoSuchFile},
 		{"can't use getUpdates method while webhook is active", ErrWebhookSet},
 		{"message thread not found", ErrNoSuchTopic},
+		{"not enough rights", ErrNoRights},
 	} {
 		if strings.Contains(description, known.phrase) {
 			return known.sentinel
@@ -322,7 +387,11 @@ func refusal(description string) error {
 // The limit counts the escaped text, and truncation happens before escaping so
 // that a cut can never land inside an &amp; — a half-written entity is markup
 // Telegram cannot parse, and it would reject the whole message.
-func caption(title, message string, limit int) string {
+//
+// The format applies to the body alone. The title is what a lock screen shows,
+// and a notification preview renders no markup, so it stays bold and nothing
+// else.
+func caption(title, message string, limit int, format Format) string {
 	title, message = strings.TrimSpace(title), strings.TrimSpace(message)
 	switch {
 	case title == "" && message == "":
@@ -330,14 +399,14 @@ func caption(title, message string, limit int) string {
 	case message == "":
 		return "<b>" + html.EscapeString(truncate(title, limit)) + "</b>"
 	case title == "":
-		return html.EscapeString(truncate(message, limit))
+		return format.wrap(html.EscapeString(truncate(message, limit)))
 	}
 	// The title is what gets read on a lock screen, so it keeps its length and
 	// the body gives way. The markup and the newline are not part of the text
 	// Telegram counts, but the escaping is.
 	title = truncate(title, limit)
 	head := "<b>" + html.EscapeString(title) + "</b>\n"
-	return head + html.EscapeString(truncate(message, limit-escapedLen(title)-1))
+	return head + format.wrap(html.EscapeString(truncate(message, limit-escapedLen(title)-1)))
 }
 
 // truncate cuts text down until it fits the limit once escaped, marking the cut

@@ -281,7 +281,7 @@ func TestCaptionFitsTheLimit(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := caption(tc.title, tc.body, tc.limit)
+			got := caption(tc.title, tc.body, tc.limit, Format{})
 			if tc.want != "" || tc.wantMaxRunes == 0 {
 				if got != tc.want {
 					t.Fatalf("caption = %q, want %q", got, tc.want)

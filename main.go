@@ -54,6 +54,10 @@ func main() {
 		if err := cmdReceive(ctx, defaultConfig, args[1:], os.Stdout); err != nil {
 			fail(err)
 		}
+	case "topic":
+		if err := cmdTopic(ctx, defaultConfig, args[1:], os.Stdout); err != nil {
+			fail(err)
+		}
 	case "capabilities":
 		if err := cmdCapabilities(defaultConfig, args[1:], os.Stdout); err != nil {
 			fail(err)
@@ -80,9 +84,12 @@ func usage(out io.Writer) {
 usage:
   morse send [--silent] [--file path] <title> [body]
                               send a message; body may come from stdin
-  morse send --topic <id> <title> [body]
+  morse send --topic <id|name> <title> [body]
                               post into one forum topic of the chat — one
                               topic per app keeps their messages apart
+  morse send --code [--collapse] <title> [body]
+                              the body as a code block, folded behind
+                              "show more" with --collapse; edit takes both too
   morse send --title <t> --body <b>
                               the same, named rather than positional
   morse send --track <label> [--json] <title> [body]
@@ -99,6 +106,8 @@ usage:
                               its text, on stdout
   morse receive get <message_id> --save <dir>
                               its attachment, into a directory
+  morse topic create [--json] <name>
+                              open a forum topic and print its id
   morse capabilities [--json] what morse accepts, for a caller
   morse version
   morse help
@@ -119,6 +128,8 @@ type messageFlags struct {
 	bodyFlag   *string
 	label      *string
 	asJSON     *bool
+	code       *bool
+	collapse   *bool
 }
 
 // newMessageFlags starts a command's flag set with the shared flags on it. The
@@ -133,7 +144,16 @@ func newMessageFlags(name, defaultConfig, trackUsage string) *messageFlags {
 		bodyFlag:   fs.String("body", "", "the body, instead of the remaining arguments"),
 		label:      fs.String("track", "", trackUsage),
 		asJSON:     fs.Bool("json", false, "print the message id, and what it was sent as, as JSON"),
+		code:       fs.Bool("code", false, "show the body in monospace, as a code block"),
+		collapse:   fs.Bool("collapse", false, "fold the body into an expandable quote"),
 	}
+}
+
+// format is how the body is to be shown. send and edit both take it, because
+// a rewrite replaces the markup with the text: a tracked status sent as code
+// has to be rewritten as code too.
+func (f *messageFlags) format() notifier.Format {
+	return notifier.Format{Code: *f.code, Collapse: *f.collapse}
 }
 
 // message works out what to say, from the arguments left after parsing. haveFile
@@ -185,14 +205,10 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	f := newMessageFlags("send", defaultConfig, "keep the message under this label current: sent the first time, rewritten after")
 	silent := f.fs.Bool("silent", false, "deliver without a notification sound")
 	file := f.fs.String("file", "", "upload this file, with the title and body as its caption")
-	topic := f.fs.Int64("topic", 0, "post into this forum topic of the chat (its message_thread_id)")
+	topicFlag := f.fs.String("topic", "", "post into this forum topic of the chat: its id, or a name from the config")
 	if err := f.fs.Parse(args); err != nil {
 		return err
 	}
-	if *topic < 0 {
-		return fmt.Errorf("--topic %d is not a topic id; it is the number at the end of a link to the topic", *topic)
-	}
-	opts := notifier.SendOptions{Silent: *silent, Topic: *topic}
 	// A file is something to send in its own right, so a bare `morse send
 	// --file report.pdf` is a complete instruction and needs no title.
 	title, body, err := f.message(f.fs.Args(), *file != "")
@@ -203,6 +219,13 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	if err != nil {
 		return err
 	}
+	var topic int64
+	if *topicFlag != "" {
+		if topic, err = cfg.Telegram.Topic(*topicFlag); err != nil {
+			return err
+		}
+	}
+	opts := notifier.SendOptions{Silent: *silent, Topic: topic, Format: f.format()}
 	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
 
 	// An upload has no in-place form — replacing a document is a different API
@@ -210,7 +233,7 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	// each time, and the label follows it.
 	var tracked int64
 	if *f.label != "" && *file == "" {
-		if tracked, err = trackedID(*f.label, cfg.Telegram.ChatID, *topic); err != nil {
+		if tracked, err = trackedID(*f.label, cfg.Telegram.ChatID, topic); err != nil {
 			return err
 		}
 	}
@@ -218,7 +241,7 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	var messageID int64
 	switch {
 	case tracked != 0:
-		messageID, err = editMessage(ctx, tg, tracked, title, body, func() (int64, error) {
+		messageID, err = editMessage(ctx, tg, tracked, title, body, opts.Format, func() (int64, error) {
 			return tg.Send(ctx, title, body, opts)
 		})
 	case *file != "":
@@ -227,9 +250,9 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 		messageID, err = tg.Send(ctx, title, body, opts)
 	}
 	if err != nil {
-		return explainTopic(err, *topic)
+		return explainTopic(err, topic)
 	}
-	return f.done(out, messageID, cfg.Telegram.ChatID, *topic, title, body)
+	return f.done(out, messageID, cfg.Telegram.ChatID, topic, title, body)
 }
 
 // editMessage rewrites a message and reports which message ended up carrying the
@@ -240,8 +263,8 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 // message by label means "the message that reports this thing", so it passes a
 // way to start a new one; one that named an id means that message, and passes
 // nil so the failure stands.
-func editMessage(ctx context.Context, tg *notifier.Telegram, messageID int64, title, body string, resend func() (int64, error)) (int64, error) {
-	switch err := tg.Edit(ctx, messageID, title, body); {
+func editMessage(ctx context.Context, tg *notifier.Telegram, messageID int64, title, body string, format notifier.Format, resend func() (int64, error)) (int64, error) {
+	switch err := tg.Edit(ctx, messageID, title, body, format); {
 	case errors.Is(err, notifier.ErrNotModified):
 		// Telegram refuses an edit that would change nothing. Something
 		// reporting an unchanged state is doing exactly what it should, and the
@@ -311,10 +334,10 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	var resend func() (int64, error)
 	if *f.label != "" {
 		resend = func() (int64, error) {
-			return tg.Send(ctx, title, body, notifier.SendOptions{Silent: true, Topic: topic})
+			return tg.Send(ctx, title, body, notifier.SendOptions{Silent: true, Topic: topic, Format: f.format()})
 		}
 	}
-	messageID, err = editMessage(ctx, tg, messageID, title, body, resend)
+	messageID, err = editMessage(ctx, tg, messageID, title, body, f.format(), resend)
 	if err != nil {
 		return explainTopic(err, topic)
 	}

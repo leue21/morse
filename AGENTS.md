@@ -27,8 +27,9 @@ when to speak. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is
 stdlib).
 
 ```
-main.go              → subcommand dispatch (send, edit, receive, capabilities, help) and send/edit
+main.go              → subcommand dispatch (send, edit, receive, topic, capabilities, help) and send/edit
 receive.go           → `morse receive list|get`: read the chat back, to stdout or a file
+topic.go             → `morse topic create`: open a forum topic, print its id
 capabilities.go      → `morse capabilities`: the callable interface, as text or JSON
 config/              → telegram credentials, from the file or MORSE_BOT_TOKEN / MORSE_CHAT_ID
 notifier/            → Telegram Bot API client (Send, SendDocument, Edit, Updates, Download)
@@ -77,6 +78,16 @@ whether it was read, so a record only ever says what morse itself last did.
   a field there, not another positional argument on `Send`. `message_thread_id`
   is left out when there is no topic, never sent as 0 — the General topic is the
   chat itself and takes none
+- `--topic` takes an id or a name from `telegram.topics` in the config, which is
+  validated on load; a number is always an id, so a name may not be one. A bot
+  cannot list topics, so names cannot be looked up and the config is where they
+  live — `morse topic create` prints the lines to add rather than rewriting a
+  file that holds the token and the owner's comments
+- `--code` and `--collapse` are a `notifier.Format`, which `Edit` takes as well
+  as `Send`: a rewrite replaces the markup with the text. The format applies to
+  the body only — the title is what a lock screen shows, and it renders no
+  markup. The tags go on after escaping and truncation, and are not counted
+  against the limit, since Telegram counts text with the entities parsed out
 - A `--track` record keeps its topic, because `edit --track` takes no `--topic`
   and the record is the only thing that knows where a replacement belongs. A
   message cannot move between topics, so `send --track` with a different topic
