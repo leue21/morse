@@ -70,6 +70,19 @@ whether it was read, so a record only ever says what morse itself last did.
 ## Conventions
 
 - `--silent` maps to Telegram's `disable_notification`; the message still arrives
+- `send --topic <id>` maps to `message_thread_id` and is how one chat keeps
+  several apps apart; telling them apart is the chat's job, not `receive`'s,
+  since a bot never sees its own messages. How a message is delivered rather
+  than what it says goes in `notifier.SendOptions`, so a new delivery option is
+  a field there, not another positional argument on `Send`. `message_thread_id`
+  is left out when there is no topic, never sent as 0 — the General topic is the
+  chat itself and takes none
+- A `--track` record keeps its topic, because `edit --track` takes no `--topic`
+  and the record is the only thing that knows where a replacement belongs. A
+  message cannot move between topics, so `send --track` with a different topic
+  than the record's starts a new message there rather than rewriting the old one
+- In `receive`, `message_thread_id` is a topic only when `is_topic_message` is
+  set: Telegram also sets it on a plain reply, naming the reply thread
 - An edit never notifies, by API behaviour rather than by flag, so `morse edit`
   takes no `--silent`. Do not add one: it would imply a louder alternative that
   does not exist

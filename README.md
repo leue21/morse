@@ -9,6 +9,7 @@ morse send --silent "Backup finished" "412 files, 3m21s"
 morse send --title "Backup failed" --body "$out"
 morse send --file report.pdf "Nightly report"
 morse send --track nightly "Nightly backup" "✓ done — 412 files"
+morse send --topic 7 "CI" "main is red"
 morse receive list | fzf | cut -d' ' -f1 | xargs morse receive get
 ```
 
@@ -83,11 +84,14 @@ matters for anything running in a container or under an agent.
 1. Message [@BotFather](https://t.me/BotFather) to create a bot and get the `bot_token`
 2. Send a message to your bot, then fetch `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your `chat_id`
 
+For a group with one topic per app, see [One topic per app](#one-topic-per-app).
+
 ## Usage
 
 ```
 morse send [--silent] [--file path] <title> [body]   send a message
 morse send --title <t> --body <b>                    the same, named
+morse send --topic <id> <title> [body]               into one topic of the chat
 morse send --track <label> [--json] <title> [body]   send, and remember it
 morse edit <message_id> <title> [body]               rewrite a sent message
 morse edit --track <label> [--json] <title> [body]   the same, by label
@@ -149,6 +153,52 @@ oversized file fails immediately instead of after the whole transfer.
 stays in the chat — it just does not buzz, so routine facts can be reported
 without training the reader to mute the chat, which would cost the messages
 that matter.
+
+## One topic per app
+
+When several things report to the same chat — a backup, a CI runner, an agent —
+their messages run together. Telegram's answer is topics: a group with topics
+turned on has one thread per subject, each with its own unread count and its
+own mute, in every Telegram client. Give each app a topic and pass it:
+
+```sh
+morse send --topic 7 --silent "Nightly backup" "✓ done — 412 files"
+morse send --topic 12 "CI" "main is red"
+```
+
+To set it up:
+
+1. Create a group, turn on **Topics** in its settings, and add the bot as an
+   admin so it can post in every topic.
+2. Point `chat_id` (or `MORSE_CHAT_ID`) at the group. Turning on Topics
+   converts a basic group into a supergroup, and the supergroup has a **new**
+   id — negative, starting with `-100`. An id read before the switch no longer
+   works, so read it afterwards.
+3. Create a topic per app, after the bot is an admin. Its id is the number
+   after the group in a link to any message in the topic
+   (`https://t.me/c/<group>/<topic>/<message>` — the chat id is `-100<group>`),
+   or post anything in it and read it back with `morse receive list --json`,
+   which shows each message's `topic`. A bot that was not yet an admin when a
+   topic was created never sees that it was, so that topic's id has to come
+   from a link.
+
+Trying it from a shell without touching the config:
+
+```sh
+MORSE_CHAT_ID=-1001234567890 morse send --topic 7 "test" "into the topic"
+```
+
+The General topic is the chat itself and takes no `--topic` at all. A topic the
+chat does not have is refused rather than delivered somewhere else.
+
+A `--track` label remembers its topic, so a message that was deleted is
+replaced in the topic it was in, by `send` and by `edit` alike. A message cannot
+move between topics, so `send --track` with a different `--topic` than last time
+starts a new message there and points the label at it.
+
+Filtering by app is something the chat does, not morse: a bot never sees the
+messages it sent itself, so `morse receive` cannot read your apps' notifications
+back, by topic or otherwise.
 
 ## Updating a message instead of sending another
 

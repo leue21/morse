@@ -58,6 +58,9 @@ morse send --track backup --silent "Backup" "done — 3m21s"
   even that is unwanted.
 - If the tracked message was deleted, the next `send --track` starts a new one
   and repoints the label.
+- `--topic <id>` posts into one forum topic of the chat, so each app's messages
+  stay in their own thread. A label remembers its topic; pass the same
+  `--topic` on every call, since a different one starts a new message there.
 - `morse edit --track <label>` rewrites but *fails* if the label means nothing
   yet — use it interactively, where a typo should say so; use `send --track` in
   a script. `morse edit <id>` means that one message and never replaces it.

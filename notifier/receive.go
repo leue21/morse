@@ -32,12 +32,16 @@ var ErrNoSuchFile = errors.New("file not found")
 // Message is an inbound message, cut down to what morse can do something with:
 // enough to show it in a list, and enough to fetch what it carried.
 type Message struct {
-	MessageID int64     `json:"message_id"`
-	ChatID    int64     `json:"chat_id"`
-	Date      time.Time `json:"date"`
-	From      string    `json:"from,omitempty"`
-	Text      string    `json:"text,omitempty"`
-	File      *File     `json:"file,omitempty"`
+	MessageID int64 `json:"message_id"`
+	ChatID    int64 `json:"chat_id"`
+	// Topic is the forum topic the message was posted in, or 0 outside one.
+	// It is here mostly so a caller can find a topic's id: post anything in
+	// it, and read the number back.
+	Topic int64     `json:"topic,omitempty"`
+	Date  time.Time `json:"date"`
+	From  string    `json:"from,omitempty"`
+	Text  string    `json:"text,omitempty"`
+	File  *File     `json:"file,omitempty"`
 }
 
 // File is an attachment, named well enough to be listed and identified well
@@ -300,7 +304,11 @@ func destination(dir, name string) (string, error) {
 type rawMessage struct {
 	MessageID int64 `json:"message_id"`
 	Date      int64 `json:"date"`
-	Chat      struct {
+	// message_thread_id is also set on a reply outside any forum, naming the
+	// thread of replies; only is_topic_message says it is a forum topic.
+	ThreadID       int64 `json:"message_thread_id"`
+	IsTopicMessage bool  `json:"is_topic_message"`
+	Chat           struct {
 		ID int64 `json:"id"`
 	} `json:"chat"`
 	From *struct {
@@ -334,6 +342,9 @@ func (r *rawMessage) message() Message {
 		ChatID:    r.Chat.ID,
 		Date:      time.Unix(r.Date, 0),
 		Text:      r.Text,
+	}
+	if r.IsTopicMessage {
+		m.Topic = r.ThreadID
 	}
 	if m.Text == "" {
 		// A caption is the text of a message that came with something attached,

@@ -29,9 +29,13 @@ import (
 // cannot ask the Bot API what a message currently says, whether it still exists,
 // or whether anyone read it — so this says what morse last did, and no more.
 type Record struct {
-	Label     string    `json:"label"`
-	MessageID int64     `json:"message_id"`
-	ChatID    int64     `json:"chat_id"`
+	Label     string `json:"label"`
+	MessageID int64  `json:"message_id"`
+	ChatID    int64  `json:"chat_id"`
+	// Topic is the forum topic the message lives in, so that a message that
+	// has to be replaced is replaced where the old one was. 0 is the chat
+	// itself, which is also what a record from before topics reads as.
+	Topic     int64     `json:"topic,omitempty"`
 	Text      string    `json:"text"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
