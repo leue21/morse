@@ -226,7 +226,7 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 		}
 	}
 	opts := notifier.SendOptions{Silent: *silent, Topic: topic, Format: f.format()}
-	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
+	tg := client(cfg)
 
 	// An upload has no in-place form — replacing a document is a different API
 	// call, and morse does not make it — so a tracked file send is a new message
@@ -322,7 +322,7 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 		return fmt.Errorf("label %s names a message in chat %d, but the config now points at chat %d; `morse send --track %s ...` starts it there",
 			*f.label, target.chatID, cfg.Telegram.ChatID, *f.label)
 	}
-	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
+	tg := client(cfg)
 
 	// A label names the message that reports a thing, not one particular
 	// message, so a gone one is replaced and the label repointed: otherwise
@@ -378,6 +378,12 @@ func editTarget(args []string, label string) (t target, rest []string, err error
 // id was given, which says nothing about either.
 type target struct {
 	messageID, chatID, topic int64
+}
+
+// client builds the Bot API client a config describes. Every command goes
+// through here, so a setting about how to reach Telegram applies to all of them.
+func client(cfg *config.Config) *notifier.Telegram {
+	return notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID).UseServer(cfg.Telegram.APIURL)
 }
 
 // remember writes down which message a label now stands for.

@@ -65,3 +65,36 @@ func TestLoadRefusesTopicsThatCannotWork(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIURLFromFileOrEnvironment(t *testing.T) {
+	t.Setenv(BotTokenEnv, "")
+	t.Setenv(ChatIDEnv, "")
+	t.Setenv(APIURLEnv, "")
+	cfg, err := Load(write(t, "telegram:\n  bot_token: tok\n  chat_id: 1\n  api_url: http://localhost:8081/\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The client adds /bot<token>/<method>; a trailing slash would double it.
+	if cfg.Telegram.APIURL != "http://localhost:8081" {
+		t.Errorf("api_url = %q", cfg.Telegram.APIURL)
+	}
+
+	t.Setenv(APIURLEnv, "https://bots.example.org")
+	cfg, err = Load(write(t, "telegram:\n  bot_token: tok\n  chat_id: 1\n  api_url: http://localhost:8081\n"))
+	if err != nil || cfg.Telegram.APIURL != "https://bots.example.org" {
+		t.Errorf("env did not win: %q, %v", cfg.Telegram.APIURL, err)
+	}
+}
+
+// A mistyped server would otherwise surface as a network error on the first
+// send — the alert that was supposed to arrive.
+func TestAPIURLThatIsNotOneIsRefused(t *testing.T) {
+	t.Setenv(BotTokenEnv, "tok")
+	t.Setenv(ChatIDEnv, "1")
+	for _, bad := range []string{"localhost:8081", "ftp://host", "http://", "::"} {
+		t.Setenv(APIURLEnv, bad)
+		if _, err := Load(write(t, "")); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

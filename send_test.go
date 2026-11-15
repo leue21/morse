@@ -85,7 +85,7 @@ func TestResolveMessage(t *testing.T) {
 	}, {
 		// The flag was passed, so the caller has answered the question that
 		// stdin would otherwise be asked.
-		name: "an explicit empty body does not fall through to stdin",
+		name:      "an explicit empty body does not fall through to stdin",
 		titleFlag: ptr("Build failed"), bodyFlag: ptr(""),
 		stdin:     "panic: nil map\n",
 		wantTitle: "Build failed", wantBody: "(no details)",

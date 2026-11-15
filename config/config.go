@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 const (
 	BotTokenEnv = "MORSE_BOT_TOKEN"
 	ChatIDEnv   = "MORSE_CHAT_ID"
+	APIURLEnv   = "MORSE_API_URL"
 )
 
 type Config struct {
@@ -32,6 +34,12 @@ type TelegramConfig struct {
 	// chat's topics, so the names cannot be looked up and have to be written
 	// down — here, once, rather than in every caller.
 	Topics map[string]int64 `yaml:"topics"`
+	// APIURL is the Bot API server to talk to, when it is not Telegram's own.
+	// A self-hosted server (telegram-bot-api) accepts uploads up to 2000 MB
+	// rather than 50; it is also how the tests put a fake server in front of
+	// the whole command rather than of the client alone. The bot token is
+	// sent to whatever this names, so it is only ever set deliberately.
+	APIURL string `yaml:"api_url"`
 }
 
 // Topic resolves what --topic was given: a topic id as it is, or a name from
@@ -85,6 +93,19 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s: %w", ChatIDEnv, err)
 		}
 		cfg.Telegram.ChatID = id
+	}
+
+	if raw := os.Getenv(APIURLEnv); raw != "" {
+		cfg.Telegram.APIURL = raw
+	}
+	if cfg.Telegram.APIURL != "" {
+		// Checked here, because a mistyped server is otherwise reported as a
+		// network failure on the first send — the one that was an alert.
+		u, err := url.Parse(cfg.Telegram.APIURL)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return nil, fmt.Errorf("api_url %q: want an http or https URL, such as http://localhost:8081", cfg.Telegram.APIURL)
+		}
+		cfg.Telegram.APIURL = strings.TrimRight(cfg.Telegram.APIURL, "/")
 	}
 
 	if cfg.Telegram.BotToken == "" {
