@@ -35,3 +35,9 @@ jobs:
       # -race because a FakeAPI handler runs on the server's goroutine while
       # the test reads what it recorded.
       - run: go test -race -count=1 ./...
+
+      # The release builds every platform; building them here too means a
+      # change that breaks one (a syscall that does not exist on Windows) is
+      # found in its pull request, not when a tag is pushed.
+      - name: Build every release platform
+        run: scripts/build-release.sh "ci-${GITHUB_SHA::7}" dist

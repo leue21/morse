@@ -40,7 +40,8 @@ that, and what comes next:
 
 ## Quickstart
 
-1. **Install** (or see [Install](#install) for building from source):
+1. **Install** — download a binary from the
+   [latest release](https://github.com/leue21/morse/releases/latest), or:
 
    ```sh
    brew tap leue21/morse https://github.com/leue21/morse && brew install leue21/morse/morse
@@ -75,6 +76,26 @@ It reads the other direction the same way — one call, no daemon — so what wa
 sent back to the bot can be found and used from the terminal it was meant for.
 
 ## Install
+
+### Download a binary
+
+Every [release](https://github.com/leue21/morse/releases/latest) has a ready
+binary for Linux (x86-64, ARM64, and ARMv7 for a 32-bit Raspberry Pi), macOS
+(Intel and Apple silicon), Windows (x86-64 and ARM64) and FreeBSD. Each is a
+single static file with nothing to install alongside it:
+
+```sh
+curl -sSLO https://github.com/leue21/morse/releases/latest/download/morse_linux_arm64.tar.gz
+tar -xzf morse_linux_arm64.tar.gz
+install -m 755 morse_linux_arm64/morse ~/.local/bin/
+```
+
+The file names are the same in every release, so that link always fetches the
+newest one; `morse version` says which it is. Swap `linux_arm64` for your
+platform: `linux_amd64`, `linux_armv7`, `darwin_arm64`, `darwin_amd64`,
+`freebsd_amd64`, or `windows_amd64.zip` / `windows_arm64.zip`. `SHA256SUMS` in
+the same release lists every archive's checksum, for `sha256sum -c SHA256SUMS
+--ignore-missing`. Each archive also holds `config.yaml.example`.
 
 ### Homebrew
 

@@ -29,6 +29,13 @@ MORSE_SMOKE_CHAT_ID=-100… make smoke
 The race detector does not run on this Raspberry Pi (its kernel's 47-bit
 address space is unsupported); CI runs `go test -race` on every push and PR.
 
+Releasing is a tag push and nothing else: `release.yml` runs the tests, builds
+every platform with `scripts/build-release.sh`, creates the GitHub release
+(generated notes) with the archives and `SHA256SUMS` attached, and updates the
+Homebrew tap. Do not create the release by hand first — the workflow creates it
+when missing, and uploads with `--clobber`, so re-running a tag is safe.
+Archive names carry no version, so `releases/latest/download/<name>` is stable.
+
 ## Architecture
 
 **morse** is a CLI that sends one Telegram message and exits; callers decide
