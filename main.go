@@ -54,6 +54,10 @@ func main() {
 		if err := cmdReceive(ctx, defaultConfig, args[1:], os.Stdout); err != nil {
 			fail(err)
 		}
+	case "delete":
+		if err := cmdDelete(ctx, defaultConfig, args[1:], os.Stdout); err != nil {
+			fail(err)
+		}
 	case "topic":
 		if err := cmdTopic(ctx, defaultConfig, args[1:], os.Stdout); err != nil {
 			fail(err)
@@ -95,6 +99,12 @@ usage:
   morse send --track <label> [--json] <title> [body]
                               keep one message current: sent the first time,
                               rewritten every time after — call it either way
+  morse send --reply-to <id|label> [--pin] <title> [body]
+                              answer an earlier message; pin the new one
+  morse send --photo <path> [title] [body]
+                              an image shown in the chat, not a file
+  morse send --no-preview <title> [body]
+                              no link preview card; edit takes it too
   morse edit <message_id> <title> [body]
                               rewrite a message already in the chat; never notifies
   morse edit --track <label> [--json] <title> [body]
@@ -106,6 +116,8 @@ usage:
                               its text, on stdout
   morse receive get <message_id> --save <dir>
                               its attachment, into a directory
+  morse delete <message_id>... | --track <label>
+                              remove messages; a label is forgotten too
   morse topic create [--json] <name>
                               open a forum topic and print its id
   morse capabilities [--json] what morse accepts, for a caller
@@ -130,6 +142,7 @@ type messageFlags struct {
 	asJSON     *bool
 	code       *bool
 	collapse   *bool
+	noPreview  *bool
 }
 
 // newMessageFlags starts a command's flag set with the shared flags on it. The
@@ -146,6 +159,7 @@ func newMessageFlags(name, defaultConfig, trackUsage string) *messageFlags {
 		asJSON:     fs.Bool("json", false, "print the message id, and what it was sent as, as JSON"),
 		code:       fs.Bool("code", false, "show the body in monospace, as a code block"),
 		collapse:   fs.Bool("collapse", false, "fold the body into an expandable quote"),
+		noPreview:  fs.Bool("no-preview", false, "show no link preview for a URL in the text"),
 	}
 }
 
@@ -153,7 +167,7 @@ func newMessageFlags(name, defaultConfig, trackUsage string) *messageFlags {
 // a rewrite replaces the markup with the text: a tracked status sent as code
 // has to be rewritten as code too.
 func (f *messageFlags) format() notifier.Format {
-	return notifier.Format{Code: *f.code, Collapse: *f.collapse}
+	return notifier.Format{Code: *f.code, Collapse: *f.collapse, NoPreview: *f.noPreview}
 }
 
 // message works out what to say, from the arguments left after parsing. haveFile
@@ -205,13 +219,20 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	f := newMessageFlags("send", defaultConfig, "keep the message under this label current: sent the first time, rewritten after")
 	silent := f.fs.Bool("silent", false, "deliver without a notification sound")
 	file := f.fs.String("file", "", "upload this file, with the title and body as its caption")
+	photo := f.fs.String("photo", "", "upload this image to be shown as one, with the title and body as its caption")
 	topicFlag := f.fs.String("topic", "", "post into this forum topic of the chat: its id, or a name from the config")
+	replyTo := f.fs.String("reply-to", "", "send as a reply to this message: its id, or a --track label")
+	pin := f.fs.Bool("pin", false, "pin the message, without a notification")
 	if err := f.fs.Parse(args); err != nil {
 		return err
 	}
+	if *file != "" && *photo != "" {
+		return errors.New("--file and --photo each send one upload; pick one")
+	}
+	upload := *file != "" || *photo != ""
 	// A file is something to send in its own right, so a bare `morse send
 	// --file report.pdf` is a complete instruction and needs no title.
-	title, body, err := f.message(f.fs.Args(), *file != "")
+	title, body, err := f.message(f.fs.Args(), upload)
 	if err != nil {
 		return err
 	}
@@ -225,14 +246,20 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 			return err
 		}
 	}
-	opts := notifier.SendOptions{Silent: *silent, Topic: topic, Format: f.format()}
+	var reply int64
+	if *replyTo != "" {
+		if reply, err = replyTarget(*replyTo, cfg.Telegram.ChatID); err != nil {
+			return err
+		}
+	}
+	opts := notifier.SendOptions{Silent: *silent, Topic: topic, Format: f.format(), ReplyTo: reply}
 	tg := client(cfg)
 
 	// An upload has no in-place form — replacing a document is a different API
-	// call, and morse does not make it — so a tracked file send is a new message
+	// call, and morse does not make it — so a tracked upload is a new message
 	// each time, and the label follows it.
 	var tracked int64
-	if *f.label != "" && *file == "" {
+	if *f.label != "" && !upload {
 		if tracked, err = trackedID(*f.label, cfg.Telegram.ChatID, topic); err != nil {
 			return err
 		}
@@ -246,13 +273,61 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 		})
 	case *file != "":
 		messageID, err = tg.SendDocument(ctx, *file, title, body, opts)
+	case *photo != "":
+		messageID, err = tg.SendPhoto(ctx, *photo, title, body, opts)
 	default:
 		messageID, err = tg.Send(ctx, title, body, opts)
 	}
 	if err != nil {
 		return explainTopic(err, topic)
 	}
-	return f.done(out, messageID, cfg.Telegram.ChatID, topic, title, body)
+
+	// Pinned once, when the message is new. A rewrite is the same message and
+	// already pinned; pinning it again on every update would be a request a
+	// minute for nothing. A pin that fails leaves a delivered message, so the
+	// label is still recorded and the id still printed before saying so.
+	var pinErr error
+	if *pin && messageID != 0 && messageID != tracked {
+		pinErr = tg.Pin(ctx, messageID)
+	}
+	if err := f.done(out, messageID, cfg.Telegram.ChatID, topic, title, body); err != nil {
+		return err
+	}
+	if pinErr != nil {
+		return fmt.Errorf("message delivered, but not pinned: %w", explainRights(pinErr, "pin messages"))
+	}
+	return nil
+}
+
+// replyTarget resolves --reply-to: a message id as it is, or the message a
+// --track label stands for — so "finished" can answer "started" without the
+// caller holding the id. A number is always an id.
+func replyTarget(given string, chatID int64) (int64, error) {
+	if id, err := strconv.ParseInt(given, 10, 64); err == nil {
+		if id <= 0 {
+			return 0, fmt.Errorf("--reply-to %d is not a message id", id)
+		}
+		return id, nil
+	}
+	rec, err := recall(given)
+	if err != nil {
+		return 0, fmt.Errorf("--reply-to: %w", err)
+	}
+	// An id is only unique within its chat; replying to it in another would
+	// attach the reply to some unrelated message.
+	if rec.ChatID != chatID {
+		return 0, fmt.Errorf("--reply-to %s: that label names a message in chat %d, not this one", given, rec.ChatID)
+	}
+	return rec.MessageID, nil
+}
+
+// explainRights says which admin right a refusal is about. Telegram names the
+// action it refused, never the switch that would allow it.
+func explainRights(err error, right string) error {
+	if errors.Is(err, notifier.ErrNoRights) {
+		return fmt.Errorf("%w — in the group's settings, give the bot the admin right to %s", err, right)
+	}
+	return err
 }
 
 // editMessage rewrites a message and reports which message ended up carrying the

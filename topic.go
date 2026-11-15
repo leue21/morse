@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"strings"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/leue21/morse/notifier"
 )
 
 // topicNameLimit is Telegram's: a topic name is 1 to 128 characters.
@@ -56,11 +53,8 @@ func cmdTopicCreate(ctx context.Context, defaultConfig string, args []string, ou
 		return err
 	}
 	id, err := tg.CreateTopic(ctx, name)
-	if errors.Is(err, notifier.ErrNoRights) {
-		return fmt.Errorf("%w — in the group's settings, give the bot the admin right to manage topics", err)
-	}
 	if err != nil {
-		return err
+		return explainRights(err, "manage topics")
 	}
 
 	if *asJSON {

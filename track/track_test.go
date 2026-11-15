@@ -135,3 +135,21 @@ func TestDirFollowsXDGStateHome(t *testing.T) {
 		t.Errorf("dir = %q, want ~/.local/state/morse", dir)
 	}
 }
+
+func TestRemoveForgetsALabelAndIsSafeToRepeat(t *testing.T) {
+	dir := t.TempDir()
+	if err := Save(dir, Record{Label: "nightly", MessageID: 5}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := Remove(dir, "nightly"); err != nil {
+			t.Fatalf("remove %d: %v", i+1, err)
+		}
+	}
+	if _, err := Load(dir, "nightly"); !errors.Is(err, ErrNoSuchLabel) {
+		t.Errorf("after remove: %v, want ErrNoSuchLabel", err)
+	}
+	if err := Remove(dir, "../escape"); err == nil {
+		t.Error("removed a label that is not a name")
+	}
+}

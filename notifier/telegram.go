@@ -25,7 +25,17 @@ const (
 	messageLimit   = 4096
 	captionLimit   = 1024
 	maxUploadBytes = 50 << 20
+	// A photo has a ceiling of its own, well under a document's: Telegram
+	// re-encodes it for display, and takes at most 10 MB to do that with.
+	maxPhotoBytes = 10 << 20
 )
+
+// maxRetryWait is the longest morse will wait when Telegram asks it to slow
+// down. A burst of alerts — every unit on a host failing at once — is exactly
+// when the API says "too many requests", and dropping an alert then is the
+// worst moment to. But a wait longer than this is a sign of something other
+// than a burst, and a caller blocked for minutes is a caller that looks hung.
+const maxRetryWait = 60 * time.Second
 
 // What Telegram refuses, as something a caller can branch on.
 //
@@ -62,6 +72,11 @@ var (
 	// right a call needs. Telegram names the action but not the right, so the
 	// caller, which knows what it was trying to do, says which switch to flip.
 	ErrNoRights = errors.New("the bot lacks the rights for this")
+
+	// ErrRateLimited reports that Telegram asked morse to slow down, and
+	// either the wait it asked for was too long to sit through or asking again
+	// after it did not help.
+	ErrRateLimited = errors.New("telegram asked to slow down")
 )
 
 // SendOptions is how a new message is delivered, as opposed to what it says.
@@ -76,6 +91,11 @@ type SendOptions struct {
 	Topic int64
 	// Format is how the body is shown.
 	Format Format
+	// ReplyTo is the message this one answers, or 0. The reply is shown
+	// attached to it, so "backup finished" sits under "backup started". A
+	// reply to a message that is gone is sent anyway, as a plain message:
+	// what it reports matters more than what it was answering.
+	ReplyTo int64
 }
 
 // Format is how a message's body is shown, as opposed to what it says. It is
@@ -91,6 +111,19 @@ type Format struct {
 	// "show more". A journal excerpt is worth having in the chat and not worth
 	// scrolling past every time.
 	Collapse bool
+	// NoPreview turns off the link preview Telegram otherwise builds for the
+	// first URL in a message — a large card for a link to a CI run or a
+	// dashboard, which is not what the message is about.
+	NoPreview bool
+}
+
+// applyText adds what a format means for a text message beyond its markup.
+// A file caption has no link preview, so this applies to sends and edits of
+// text alone.
+func (f Format) applyText(payload map[string]any) {
+	if f.NoPreview {
+		payload["link_preview_options"] = map[string]any{"is_disabled": true}
+	}
 }
 
 // wrap puts the body's markup around text that is already escaped. The tags
@@ -118,6 +151,12 @@ func (o SendOptions) apply(set func(name string, value any)) {
 	if o.Topic != 0 {
 		set("message_thread_id", o.Topic)
 	}
+	if o.ReplyTo != 0 {
+		set("reply_parameters", map[string]any{
+			"message_id":                  o.ReplyTo,
+			"allow_sending_without_reply": true,
+		})
+	}
 }
 
 // Telegram sends messages via the Telegram Bot API.
@@ -126,6 +165,9 @@ type Telegram struct {
 	chatID   int64
 	client   *http.Client
 	baseURL  string // overridable for testing; defaults to "https://api.telegram.org"
+	// wait sleeps for a rate limit's retry_after, or until ctx is done. A
+	// test replaces it, so that it can see the wait without sitting it out.
+	wait func(ctx context.Context, d time.Duration) error
 }
 
 func NewTelegram(botToken string, chatID int64) *Telegram {
@@ -134,6 +176,18 @@ func NewTelegram(botToken string, chatID int64) *Telegram {
 		chatID:   chatID,
 		client:   &http.Client{Timeout: 10 * time.Second},
 		baseURL:  "https://api.telegram.org",
+		wait:     sleep,
+	}
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -167,6 +221,7 @@ func (t *Telegram) Send(ctx context.Context, title, message string, opts SendOpt
 		"parse_mode": "HTML",
 	}
 	opts.apply(func(name string, value any) { payload[name] = value })
+	opts.Format.applyText(payload)
 
 	return t.postJSON(ctx, "sendMessage", payload)
 }
@@ -188,9 +243,24 @@ func (t *Telegram) Edit(ctx context.Context, messageID int64, title, message str
 		"text":       caption(title, message, messageLimit, format),
 		"parse_mode": "HTML",
 	}
+	format.applyText(payload)
 
 	_, err := t.postJSON(ctx, "editMessageText", payload)
 	return err
+}
+
+// Pin pins a message to the top of the chat, or of its topic. It never
+// notifies: what is pinned is a status worth keeping in view, not news, and a
+// message that wanted to make a sound already made it when it was sent.
+func (t *Telegram) Pin(ctx context.Context, messageID int64) error {
+	if _, err := t.callJSON(ctx, "pinChatMessage", map[string]any{
+		"chat_id":              t.chatID,
+		"message_id":           messageID,
+		"disable_notification": true,
+	}); err != nil {
+		return fmt.Errorf("pinning message: %w", err)
+	}
+	return nil
 }
 
 // CreateTopic opens a new forum topic in the chat and reports its id — the
@@ -271,7 +341,7 @@ func (t *Telegram) callJSON(ctx context.Context, method string, payload map[stri
 	if err != nil {
 		return nil, fmt.Errorf("marshaling payload: %w", err)
 	}
-	return t.call(ctx, method, "application/json", bytes.NewReader(body))
+	return t.call(ctx, method, "application/json", body)
 }
 
 // SendDocument uploads a file and reports it with the same title and body a
@@ -279,6 +349,21 @@ func (t *Telegram) callJSON(ctx context.Context, method string, payload map[stri
 // binary does not, and asking the reader to go and fetch it defeats the point of
 // telling them at all.
 func (t *Telegram) SendDocument(ctx context.Context, path, title, message string, opts SendOptions) (int64, error) {
+	return t.upload(ctx, "sendDocument", "document", maxUploadBytes, path, title, message, opts)
+}
+
+// SendPhoto uploads an image to be shown as one, in the chat, rather than as a
+// file to download and open. Telegram re-encodes it, so a screenshot or a graph
+// arrives looking right and a pixel-exact original does not — that is what
+// SendDocument is for.
+func (t *Telegram) SendPhoto(ctx context.Context, path, title, message string, opts SendOptions) (int64, error) {
+	return t.upload(ctx, "sendPhoto", "photo", maxPhotoBytes, path, title, message, opts)
+}
+
+// upload sends a file through one of the methods that take one, with the title
+// and body as its caption. field is the form field the method reads the file
+// from, and limit the size Telegram accepts through it.
+func (t *Telegram) upload(ctx context.Context, method, field string, limit int64, path, title, message string, opts SendOptions) (int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return 0, fmt.Errorf("opening file: %w", err)
@@ -296,9 +381,9 @@ func (t *Telegram) SendDocument(ctx context.Context, path, title, message string
 	// that arrives after the whole file has gone up the wire — on the kind of
 	// connection that made the size a problem — into an error before the first
 	// byte is sent.
-	if info.Size() > maxUploadBytes {
-		return 0, fmt.Errorf("%s is %d MB; telegram accepts at most %d MB",
-			path, info.Size()>>20, maxUploadBytes>>20)
+	if info.Size() > limit {
+		return 0, fmt.Errorf("%s is %d MB; telegram accepts at most %d MB through %s",
+			path, info.Size()>>20, limit>>20, method)
 	}
 
 	var buf bytes.Buffer
@@ -307,7 +392,7 @@ func (t *Telegram) SendDocument(ctx context.Context, path, title, message string
 		"chat_id":    strconv.FormatInt(t.chatID, 10),
 		"parse_mode": "HTML",
 	}
-	opts.apply(func(name string, value any) { fields[name] = fmt.Sprint(value) })
+	opts.apply(func(name string, value any) { fields[name] = formValue(value) })
 	// An empty caption field is not the same as no caption: Telegram would
 	// render the bold title of a message that has none.
 	if text := caption(title, message, captionLimit, opts.Format); text != "" {
@@ -318,7 +403,7 @@ func (t *Telegram) SendDocument(ctx context.Context, path, title, message string
 			return 0, fmt.Errorf("building upload: %w", err)
 		}
 	}
-	part, err := form.CreateFormFile("document", filepath.Base(path))
+	part, err := form.CreateFormFile(field, filepath.Base(path))
 	if err != nil {
 		return 0, fmt.Errorf("building upload: %w", err)
 	}
@@ -329,7 +414,24 @@ func (t *Telegram) SendDocument(ctx context.Context, path, title, message string
 		return 0, fmt.Errorf("building upload: %w", err)
 	}
 
-	return t.post(ctx, "sendDocument", form.FormDataContentType(), &buf)
+	return t.post(ctx, method, form.FormDataContentType(), buf.Bytes())
+}
+
+// formValue writes an option as a multipart form field. A form carries only
+// strings, so a structured value — reply_parameters — goes as the JSON the Bot
+// API documents for it, where a plain fmt.Sprint would write Go's map syntax.
+func formValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case bool, int, int64:
+		return fmt.Sprint(v)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(encoded)
 }
 
 // post sends one request to a Bot API method and reports what came back: the id
@@ -339,7 +441,7 @@ func (t *Telegram) SendDocument(ctx context.Context, path, title, message string
 // id out rather than discarding the body. It is the only chance to learn it —
 // the Bot API has no method that looks a message up afterwards — and without it
 // nothing could ever refer back to what was just sent.
-func (t *Telegram) post(ctx context.Context, method, contentType string, body io.Reader) (int64, error) {
+func (t *Telegram) post(ctx context.Context, method, contentType string, body []byte) (int64, error) {
 	result, err := t.call(ctx, method, contentType, body)
 	if err != nil {
 		return 0, err
@@ -365,34 +467,68 @@ func messageID(result json.RawMessage) int64 {
 // envelope but puts something different inside it — a Message, a File, an array
 // of Updates — so the envelope, the refusals and the token-stripping live here
 // and each caller decodes only the part it asked for.
-func (t *Telegram) call(ctx context.Context, method, contentType string, body io.Reader) (json.RawMessage, error) {
+//
+// The body is bytes rather than a stream so that it can be sent twice. When
+// Telegram answers 429 it says how long to wait, and morse waits that long —
+// up to maxRetryWait — and asks once more, rather than dropping an alert in
+// the burst that tripped the limit.
+func (t *Telegram) call(ctx context.Context, method, contentType string, body []byte) (json.RawMessage, error) {
+	result, retryAfter, err := t.callOnce(ctx, method, contentType, body)
+	if retryAfter == 0 {
+		return result, err
+	}
+	wait := time.Duration(retryAfter) * time.Second
+	if wait > maxRetryWait {
+		return nil, fmt.Errorf("%w: it asked for %s, longer than morse waits: %w", ErrRateLimited, wait, err)
+	}
+	if err := t.wait(ctx, wait); err != nil {
+		return nil, err
+	}
+	result, retryAfter, err = t.callOnce(ctx, method, contentType, body)
+	if retryAfter != 0 {
+		return nil, fmt.Errorf("%w: still limited after waiting %s: %w", ErrRateLimited, wait, err)
+	}
+	return result, err
+}
+
+// callOnce makes one request, and reports how many seconds Telegram asked to
+// wait if it refused it for going too fast.
+func (t *Telegram) callOnce(ctx context.Context, method, contentType string, body []byte) (json.RawMessage, int, error) {
 	endpoint := fmt.Sprintf("%s/bot%s/%s", t.baseURL, t.botToken, method)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("building request: %w", withoutURL(err))
+		return nil, 0, fmt.Errorf("building request: %w", withoutURL(err))
 	}
 	req.Header.Set("Content-Type", contentType)
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("calling telegram %s: %w", method, withoutURL(err))
+		return nil, 0, fmt.Errorf("calling telegram %s: %w", method, withoutURL(err))
 	}
 	defer resp.Body.Close()
 
 	var envelope struct {
 		Description string          `json:"description"`
 		Result      json.RawMessage `json:"result"`
+		Parameters  struct {
+			RetryAfter int `json:"retry_after"`
+		} `json:"parameters"`
 	}
 	json.NewDecoder(resp.Body).Decode(&envelope)
 
 	if resp.StatusCode != http.StatusOK {
 		err := fmt.Errorf("telegram API error %d: %v", resp.StatusCode, envelope.Description)
-		if sentinel := refusal(envelope.Description); sentinel != nil {
-			return nil, fmt.Errorf("%w: %w", sentinel, err)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			// A 429 without a wait in it still means "slow down"; a second
+			// is the least that could help.
+			return nil, max(envelope.Parameters.RetryAfter, 1), err
 		}
-		return nil, err
+		if sentinel := refusal(envelope.Description); sentinel != nil {
+			return nil, 0, fmt.Errorf("%w: %w", sentinel, err)
+		}
+		return nil, 0, err
 	}
-	return envelope.Result, nil
+	return envelope.Result, 0, nil
 }
 
 // refusal reads what Telegram objected to out of its description, and returns

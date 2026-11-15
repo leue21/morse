@@ -36,7 +36,8 @@ when to speak. Minimal dependencies (only `gopkg.in/yaml.v3`; everything else is
 stdlib).
 
 ```
-main.go              → subcommand dispatch (send, edit, receive, topic, capabilities, help) and send/edit
+main.go              → subcommand dispatch (send, edit, receive, delete, topic, capabilities, help) and send/edit
+delete.go            → `morse delete`: remove messages by id, or a label's message and the label
 receive.go           → `morse receive list|get`: read the chat back, to stdout or a file
 topic.go             → `morse topic create`: open a forum topic, print its id
 capabilities.go      → `morse capabilities`: the callable interface, as text or JSON
@@ -94,7 +95,17 @@ whether it was read, so a record only ever says what morse itself last did.
   cannot list topics, so names cannot be looked up and the config is where they
   live — `morse topic create` prints the lines to add rather than rewriting a
   file that holds the token and the owner's comments
-- `--code` and `--collapse` are a `notifier.Format`, which `Edit` takes as well
+- A 429 is waited out once, for the `retry_after` it names, up to
+  `maxRetryWait`; `notifier.call` takes the body as bytes so it can be sent
+  twice. Never in a loop: a limit that outlasts its own wait is reported
+- `--pin` pins only a message that is new, never a rewrite. A failed pin leaves
+  a delivered message, so the label is recorded and the id printed before the
+  error. `delete --track` forgets the label only after the delete succeeded
+- `--reply-to` and `delete --track` refuse a label recorded in another chat:
+  the id there names an unrelated message
+- `receive` merges `edited_message` updates into the original's place, and
+  names what a pin notice pinned, so neither shows as a stale or blank line
+- `--code`, `--collapse` and `--no-preview` are a `notifier.Format`, which `Edit` takes as well
   as `Send`: a rewrite replaces the markup with the text. The format applies to
   the body only — the title is what a lock screen shows, and it renders no
   markup. The tags go on after escaping and truncation, and are not counted

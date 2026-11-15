@@ -118,14 +118,23 @@ morse send [--silent] [--file path] <title> [body]   send a message
 morse send --title <t> --body <b>                    the same, named
 morse send --topic <id|name> <title> [body]          into one topic of the chat
 morse send --code [--collapse] <title> [body]        body as a code block, folded
+morse send --no-preview <title> [body]               no link preview card
+morse send --photo <path> [title] [body]             an image, shown as one
+morse send --reply-to <id|label> <title> [body]      answer an earlier message
+morse send --pin <title> [body]                      pin it, silently
 morse send --track <label> [--json] <title> [body]   send, and remember it
 morse edit <message_id> <title> [body]               rewrite a sent message
 morse edit --track <label> [--json] <title> [body]   the same, by label
+morse delete <message_id>... | --track <label>       remove messages
 morse topic create [--json] <name>                   open a topic, print its id
 morse capabilities [--json]                          what morse accepts
 morse version
 morse help
 ```
+
+If Telegram answers "too many requests" — a burst of alerts can trip its limit
+of about twenty messages a minute in a group — morse waits the time it names,
+up to a minute, and sends once more, rather than dropping the message.
 
 `send`, `edit` and `capabilities` take `--config <path>` to read credentials from
 somewhere other than `~/.config/morse/config.yaml`. Flags come before the
@@ -175,6 +184,31 @@ A rewrite replaces the formatting along with the text, so pass the same flags
 every time. A tracked status sent with `--code` and rewritten without it comes
 back as plain text.
 
+## Links, replies and pins
+
+```sh
+morse send --no-preview "CI failed" "https://ci.example.org/runs/4812"
+morse send --track backup --silent "Backup" "started 03:00"
+morse send --reply-to backup "Backup" "finished — 412 files"
+morse send --track status --pin --silent "Status" "all green"
+```
+
+`--no-preview` stops Telegram from turning the first URL in a message into a
+large preview card. A rewrite rebuilds the preview, so pass it to `edit` and to
+every tracked send too.
+
+`--reply-to` sends the message as a reply, attached to an earlier one: an id,
+or a `--track` label, so "finished" can answer "started" without the caller
+holding an id. A number is always an id. If the message being answered is gone,
+the reply is sent anyway as a plain message, since what it reports matters more
+than what it answered.
+
+`--pin` pins the message at the top of the chat, or of its topic, without a
+notification. A tracked send pins when its message is new — the first time, and
+again if a deleted one is replaced — not on every rewrite. In a group the bot
+needs the admin right to pin messages; if it lacks it, the message is still
+delivered and recorded, and morse says it was not pinned.
+
 ## Sending a file
 
 ```sh
@@ -193,6 +227,12 @@ rather than letting the API reject the delivery: the body gives way first, since
 the title is what gets read on a lock screen. Telegram accepts uploads up to
 50 MB, and morse checks the size before the first byte goes up the wire, so an
 oversized file fails immediately instead of after the whole transfer.
+
+`--photo` uploads an image to be shown in the chat rather than as a file to
+download: a screenshot or a graph arrives looking like one. Telegram
+re-encodes it and accepts at most 10 MB; use `--file` for an image that has to
+arrive byte for byte. A tracked `--photo` or `--file` is a new message each
+time, since an upload cannot be rewritten in place.
 
 `--silent` delivers without a notification sound. The message still arrives and
 stays in the chat — it just does not buzz, so routine facts can be reported
@@ -333,6 +373,20 @@ Rewriting a message to the text it already has is not an error: Telegram
 refuses the call, and morse treats that as the success it is — the chat already
 says what it was asked to say.
 
+### Deleting
+
+```sh
+morse delete --track nightly     # the message, and the label with it
+morse delete 4812 4813
+```
+
+`delete --track` removes the message a label stands for and forgets the label,
+so the next `send --track` starts a fresh line — the way for a job that
+finished cleanly to take its "running" status out of the chat. A label that
+names a message in another chat than the configured one is refused rather than
+deleting whatever has that id here. A bot may delete its own messages for 48
+hours, and in a group where it is an admin with the right to delete, anyone's.
+
 ### What morse can and cannot tell you
 
 The label file records what morse last sent or edited, and when. That is
@@ -392,6 +446,10 @@ That needs a terminal that implements OSC 52 (kitty, WezTerm, foot, iTerm2,
 Alacritty and Windows Terminal do; macOS Terminal.app does not), and inside
 tmux it needs `set -g set-clipboard on` — the default, `external`, drops
 sequences coming from an application.
+
+A message that was edited after it was sent is listed once, where it was
+sent, with its text as it now reads. A notice that a message was pinned shows
+as `[pinned <id>]`, and as `pinned` in `--json`.
 
 ### What you can see, and why it is a window
 
