@@ -92,6 +92,18 @@ With both variables set, no config file is needed at all — which is the
 difference between "install and configure this" and "set two variables", and
 matters for anything running in a container or under an agent.
 
+### A self-hosted Bot API server
+
+```yaml
+telegram:
+  api_url: http://localhost:8081   # or MORSE_API_URL
+```
+
+`api_url` points morse at a Bot API server other than Telegram's, such as a
+self-hosted [telegram-bot-api](https://github.com/tdlib/telegram-bot-api),
+which accepts uploads up to 2000 MB rather than 50. The bot token is sent to
+whatever it names, so set it only to a server you run.
+
 ### Getting Telegram credentials
 
 1. Message [@BotFather](https://t.me/BotFather) to create a bot and get the `bot_token`
@@ -458,6 +470,31 @@ if ! out=$(rsync -a "$src" "$dst" 2>&1); then
     morse send --title "Backup failed" --body "$out"
 fi
 ```
+
+## Development
+
+```sh
+make test     # unit tests, against a fake Bot API
+make vet
+```
+
+The command tests in `cli_test.go` run whole commands (flags, config, labels,
+the calls made and what is printed) against a fake server, through
+`MORSE_API_URL`. CI runs them on every push and pull request, with the race
+detector and a gofmt check.
+
+What a fake server cannot know is whether Telegram still accepts the markup
+morse writes and still words its refusals the way morse reads them. For that
+there is a smoke test against the real API:
+
+```sh
+MORSE_SMOKE_CHAT_ID=-1001234567890 make smoke
+```
+
+It needs a group set aside for it, with topics turned on and the bot an admin
+that may manage topics and delete messages. It sends silently, creates one
+topic, and deletes everything it made on the way out. It never runs as part of
+`make test` or CI.
 
 ## License
 

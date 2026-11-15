@@ -11,7 +11,7 @@ CONFIGDIR ?= $(HOME)/.config/morse
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null)
 LDFLAGS   ?= -s -w -X main.version=$(VERSION)
 
-.PHONY: all build test vet clean install uninstall
+.PHONY: all build test vet clean install uninstall smoke
 
 all: build
 
@@ -20,6 +20,11 @@ build:
 
 test:
 	$(GO) test ./... -v -count=1
+
+# Against the real Bot API, in a test group: MORSE_SMOKE_CHAT_ID=-100… make smoke
+# Opt-in by build tag, so `make test` and CI never touch Telegram.
+smoke:
+	$(GO) test -tags smoke -run TestSmoke -v -count=1 .
 
 vet:
 	$(GO) vet ./...

@@ -137,6 +137,16 @@ func NewTelegram(botToken string, chatID int64) *Telegram {
 	}
 }
 
+// UseServer points the client at a Bot API server other than Telegram's: a
+// self-hosted one, or a fake one in a test. url is the server's root, with no
+// trailing slash and no /bot<token> — the client adds those.
+func (t *Telegram) UseServer(url string) *Telegram {
+	if url != "" {
+		t.baseURL = url
+	}
+	return t
+}
+
 // Send delivers one message. A silent message still arrives and stays in the
 // chat; it just does not make the reader's phone buzz, so routine facts can be
 // reported without training them to mute the chat — which would cost the
@@ -207,6 +217,41 @@ func (t *Telegram) CreateTopic(ctx context.Context, name string) (int64, error) 
 		return 0, errors.New("creating topic: telegram did not report the topic's id")
 	}
 	return topic.ThreadID, nil
+}
+
+// maxDelete is the most messages deleteMessages takes in one call.
+const maxDelete = 100
+
+// Delete removes messages from the chat.
+//
+// Telegram reports success for a batch even when some of it was already gone,
+// so a nil error means the messages are not there any more — not that each one
+// was there to delete. That is the question a caller cleaning up is asking.
+// A bot may delete its own messages for 48 hours, and anyone's in a group
+// where it is an admin with the right to delete; beyond that the call fails.
+func (t *Telegram) Delete(ctx context.Context, messageIDs ...int64) error {
+	for len(messageIDs) > 0 {
+		batch := messageIDs[:min(len(messageIDs), maxDelete)]
+		messageIDs = messageIDs[len(batch):]
+		if _, err := t.callJSON(ctx, "deleteMessages", map[string]any{
+			"chat_id":     t.chatID,
+			"message_ids": batch,
+		}); err != nil {
+			return fmt.Errorf("deleting messages: %w", err)
+		}
+	}
+	return nil
+}
+
+// DeleteTopic removes a forum topic and every message in it.
+func (t *Telegram) DeleteTopic(ctx context.Context, topic int64) error {
+	if _, err := t.callJSON(ctx, "deleteForumTopic", map[string]any{
+		"chat_id":           t.chatID,
+		"message_thread_id": topic,
+	}); err != nil {
+		return fmt.Errorf("deleting topic: %w", err)
+	}
+	return nil
 }
 
 // postJSON sends one JSON request to a Bot API method, and reads the message id

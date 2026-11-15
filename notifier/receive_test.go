@@ -441,3 +441,44 @@ func TestDestinationRefusesAPath(t *testing.T) {
 		}
 	}
 }
+
+// copyInto is publish for a filesystem without hard links. It has to keep the
+// rule publish keeps — never take a name that is already there — and leave
+// nothing behind when it cannot finish.
+func TestCopyIntoRefusesATakenName(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, ".morse-tmp")
+	if err := os.WriteFile(src, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "report.pdf")
+
+	if err := copyInto(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "new" {
+		t.Errorf("copied %q", got)
+	}
+
+	if err := os.WriteFile(src, []byte("newer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := copyInto(src, dst)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "new" {
+		t.Errorf("the existing file was overwritten with %q", got)
+	}
+}
+
+func TestCopyIntoAMissingSourceLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "report.pdf")
+	if err := copyInto(filepath.Join(dir, "gone"), dst); err == nil {
+		t.Fatal("expected an error")
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Errorf("left %s behind", dst)
+	}
+}

@@ -20,6 +20,15 @@ Run a single test:
 /usr/local/go/bin/go test ./config -run TestLoadFromEnvironmentWithoutAFile -v
 ```
 
+Against the real Bot API, in a test group (opt-in, never in CI):
+
+```bash
+MORSE_SMOKE_CHAT_ID=-100… make smoke
+```
+
+The race detector does not run on this Raspberry Pi (its kernel's 47-bit
+address space is unsupported); CI runs `go test -race` on every push and PR.
+
 ## Architecture
 
 **morse** is a CLI that sends one Telegram message and exits; callers decide
@@ -35,6 +44,8 @@ config/              → telegram credentials, from the file or MORSE_BOT_TOKEN 
 notifier/            → Telegram Bot API client (Send, SendDocument, Edit, Updates, Download)
 track/               → which message a `--track` label stands for, under ~/.local/state/morse
 internal/testutil/   → FakeAPI HTTP mock for tests
+cli_test.go          → whole commands against a fake API, via MORSE_API_URL
+smoke_test.go        → `make smoke`: the real API, in a test group (build tag)
 ```
 
 Anything that needs to watch something is a separate job that calls `morse
@@ -150,5 +161,11 @@ whether it was read, so a record only ever says what morse itself last did.
   reject the message, losing the alert; HTML reserves three, and stdlib owns them
 - All HTTP calls use `http.NewRequestWithContext(ctx, ...)` for cancellation; the
   context comes from `main` and is cancelled on SIGINT/SIGTERM
-- Tests use `testutil.FakeAPI` for HTTP mocking; `notifier.Telegram` exposes an
-  internal `baseURL` for that
+- Tests use `testutil.FakeAPI` for HTTP mocking. A notifier test can set the
+  internal `baseURL`; anything testing a whole command goes through
+  `MORSE_API_URL` (`newFake` in `cli_test.go`), the same setting a self-hosted
+  server uses, so the code under test is the code that ships
+- A rule about what a command does — edit or send, resend or fail, which topic
+  — gets a test in `cli_test.go`, not only one on the helper that implements
+  it: the helpers were each tested before, and still nothing checked that the
+  command called them

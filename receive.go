@@ -223,7 +223,7 @@ func dial(configPath string) (*notifier.Telegram, error) {
 	if err != nil {
 		return nil, err
 	}
-	return notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID), nil
+	return client(cfg), nil
 }
 
 // window reads what the bot can see, newest first, and says whether Telegram's
