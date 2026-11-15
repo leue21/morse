@@ -6,11 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/leue21/morse/config"
 	"github.com/leue21/morse/notifier"
@@ -51,8 +55,25 @@ func TestSmoke(t *testing.T) {
 
 	// Everything made is recorded as it is made, so a failure halfway still
 	// cleans up what came before it.
-	var messages, topics []int64
+	var messages, topics, pinned []int64
 	t.Cleanup(func() {
+		// A pin leaves a notice in the group, which is a message of its own
+		// that nothing reported the id of. It shows up in the window, naming
+		// what it pinned; wait out Telegram's pause between reads first.
+		if len(pinned) > 0 {
+			time.Sleep(settleDelay)
+			window, _, err := tg.Updates(ctx, notifier.MaxWindow)
+			if err != nil {
+				t.Errorf("cleanup: reading pin notices: %v", err)
+			}
+			for _, m := range window {
+				for _, p := range pinned {
+					if m.Pinned == p {
+						messages = append(messages, m.MessageID)
+					}
+				}
+			}
+		}
 		if err := tg.Delete(ctx, messages...); err != nil {
 			t.Errorf("cleanup: %v — messages %v are still in the chat", err, messages)
 		}
@@ -146,6 +167,47 @@ func TestSmoke(t *testing.T) {
 		err := cmdSend(ctx, configPath, []string{"--silent", "--topic", "999999", "morse smoke", "nowhere"}, &strings.Builder{})
 		if !errors.Is(err, notifier.ErrNoSuchTopic) {
 			t.Errorf("send to a missing topic: %v, want ErrNoSuchTopic", err)
+		}
+	})
+
+	t.Run("photo", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "graph.png")
+		img := image.NewRGBA(image.Rect(0, 0, 64, 32))
+		for x := 0; x < 64; x++ {
+			img.Set(x, 31-x/2, color.RGBA{R: 200, A: 255})
+		}
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(f, img); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		messages = append(messages, id(run(sendCmd, "--silent", "--photo", path, "morse smoke", "a photo"), "message_id"))
+	})
+
+	t.Run("reply by label, no preview, pin", func(t *testing.T) {
+		started := id(run(sendCmd, "--silent", "--track", "replied", "morse smoke", "started"), "message_id")
+		messages = append(messages, started)
+		reply := id(run(sendCmd, "--silent", "--reply-to", "replied", "--no-preview", "--pin",
+			"morse smoke", "finished — https://example.com/run/1"), "message_id")
+		messages = append(messages, reply)
+		pinned = append(pinned, reply)
+	})
+
+	t.Run("delete by label", func(t *testing.T) {
+		first := id(run(sendCmd, "--silent", "--track", "deleted", "morse smoke", "to be deleted"), "message_id")
+		if err := cmdDelete(ctx, configPath, []string{"--track", "deleted"}, &strings.Builder{}); err != nil {
+			messages = append(messages, first)
+			t.Fatal(err)
+		}
+		// The label is forgotten, so the next tracked send is a new message
+		// rather than an edit of the deleted one.
+		next := id(run(sendCmd, "--silent", "--track", "deleted", "morse smoke", "after the delete"), "message_id")
+		messages = append(messages, next)
+		if next == first {
+			t.Errorf("tracked send after delete reused %d", first)
 		}
 	})
 

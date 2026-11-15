@@ -295,6 +295,9 @@ func stamp(t time.Time) string {
 // carried. Newlines become spaces because a line is the unit a fuzzy finder
 // matches against, and a message pasted from a terminal is mostly newlines.
 func summary(m notifier.Message) string {
+	if m.Pinned != 0 && m.Text == "" && m.File == nil {
+		return fmt.Sprintf("[pinned %d]", m.Pinned)
+	}
 	text := strings.Join(strings.Fields(m.Text), " ")
 	if len([]rune(text)) > 80 {
 		text = string([]rune(text)[:79]) + "…"

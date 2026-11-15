@@ -22,6 +22,7 @@ type Capabilities struct {
 	Send      SendContract    `json:"send"`
 	Edit      EditContract    `json:"edit"`
 	Topic     TopicContract   `json:"topic"`
+	Delete    DeleteContract  `json:"delete"`
 	Receive   ReceiveContract `json:"receive"`
 }
 
@@ -42,7 +43,18 @@ type SendContract struct {
 	Track     string `json:"track"`
 	Topic     string `json:"topic"`
 	Format    string `json:"format"`
+	Preview   string `json:"no_preview"`
+	Photo     string `json:"photo"`
+	Reply     string `json:"reply_to"`
+	Pin       string `json:"pin"`
+	RateLimit string `json:"rate_limit"`
 	JSON      string `json:"json"`
+}
+
+// DeleteContract describes `morse delete`.
+type DeleteContract struct {
+	Usage string `json:"usage"`
+	Track string `json:"track"`
 }
 
 // TopicContract describes `morse topic`, the one thing about a chat's topics
@@ -100,7 +112,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			Env:     []string{config.BotTokenEnv, config.ChatIDEnv},
 		},
 		Send: SendContract{
-			Usage:     "morse send [--silent] [--code] [--collapse] [--topic id|name] [--file path] <title> [body]",
+			Usage:     "morse send [--silent] [--code] [--collapse] [--no-preview] [--topic id|name] [--reply-to id|label] [--pin] [--file path | --photo path] <title> [body]",
 			Named:     "--title and --body take the same two values by name, and win over the arguments; safest for a caller building a command from variables",
 			Silent:    "--silent delivers without a notification sound; the message still arrives",
 			BodyStdin: true,
@@ -108,7 +120,16 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			Track:     "--track <label> keeps one message current under that label: sent the first time, rewritten in place every time after, so a caller makes the same call whether or not it has reported before. Rewrites never notify",
 			Topic:     "--topic <id|name> posts into that forum topic of the chat (telegram's message_thread_id), so each sender keeps its own thread; a name is looked up, in any case, under telegram.topics in the config, and an unknown one is refused rather than sent to General, which takes no --topic. A --track label remembers its topic, and a different --topic starts a new message there",
 			Format:    "--code shows the body as a monospace code block, for logs and stack traces; --collapse folds the body behind \"show more\". Either, both, or neither; edit takes them too, and a rewrite without them drops the formatting",
+			Preview:   "--no-preview stops the first URL becoming a preview card; a rewrite rebuilds the preview, so edit takes it too",
+			Photo:     "--photo uploads an image shown in the chat rather than as a file; telegram re-encodes it and takes at most 10 MB. Not with --file",
+			Reply:     "--reply-to <id|label> sends the message as a reply to an earlier one, named by id or by --track label; a number is always an id. A reply to a message that is gone is sent anyway, as a plain message",
+			Pin:       "--pin pins the new message without a notification; a tracked send pins only when its message is new, not on every rewrite. A pin that fails leaves the message delivered and recorded, and exits 1",
+			RateLimit: "when telegram answers 429, morse waits the retry_after it names, up to 60 seconds, and sends once more",
 			JSON:      "--json prints the message id as JSON, for a caller that would rather hold the id itself than use a label",
+		},
+		Delete: DeleteContract{
+			Usage: "morse delete <message_id>...  |  morse delete --track <label>",
+			Track: "--track deletes the message the label stands for and forgets the label, so the next send --track starts a new message; a label from another chat is refused. A bot may delete its own messages for 48 hours",
 		},
 		Topic: TopicContract{
 			Usage:  "morse topic create [--json] <name>",
@@ -116,7 +137,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			Config: "prints the new topic's id and the YAML to add under telegram.topics so --topic can take its name; morse never edits the config itself",
 		},
 		Edit: EditContract{
-			Usage:  "morse edit [--code] [--collapse] <message_id> <title> [body]  |  morse edit --track <label> <title> [body]",
+			Usage:  "morse edit [--code] [--collapse] [--no-preview] <message_id> <title> [body]  |  morse edit --track <label> <title> [body]",
 			Track:  "--track <label> names the message morse remembered under that label, and fails if there is none; `morse send --track <label>` sends or rewrites without caring which, and is what a caller reporting repeatedly should use",
 			JSON:   "--json prints the id of the message that now carries the text, which differs from the one edited when a gone message was replaced",
 			Silent: "an edit never notifies anyone — that is the API's behaviour, not a flag — so there is no --silent to pass and nothing arrives on a lock screen",
@@ -125,7 +146,7 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 		Receive: ReceiveContract{
 			Usage:  "morse receive list [--json] [--limit n]  |  morse receive get <message_id> [--save dir]",
 			Window: "what the bot can see is up to 100 of the updates telegram still holds, roughly a day's worth; there is no Bot API method that reads a chat's history, and morse keeps no archive of its own. Reading never consumes: morse sends no offset at all, since a positive one deletes every update below it and a negative one forgets everything before the window — both for every reader of the bot, not just morse. The cost is that a backlog longer than the window comes back oldest first, hiding newer messages behind it; list says so on stderr when it happens. morse also never sends allowed_updates, which telegram would remember and apply to every other client polling this bot",
-			JSON:   "--json prints one JSON object per line — message_id, chat_id, topic, date, from, text, file — for jq or a picker",
+			JSON:   "--json prints one JSON object per line — message_id, chat_id, topic, date, from, text, file, pinned — for jq or a picker. An edited message appears once, with its current text",
 			Text:   "get writes the message's text to stdout exactly, with no trailing newline of its own, so where it ends up is the caller's business; a clipboard is one pipe away and is not something morse reaches for you",
 			Save:   "--save <dir> downloads what the message carried into that directory and prints the path; a bot may download at most 20 MB, and a filename already taken in that directory is refused rather than overwritten",
 			Pick:   "choosing a message is a fuzzy finder's job: `list` prints the id first on every line, so `morse receive list | fzf | cut -d' ' -f1 | xargs morse receive get` is the whole integration",
@@ -160,8 +181,10 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 		lines []string
 	}{
 		{"send", []string{caps.Send.Usage, caps.Send.Named, caps.Send.Silent, caps.Send.File,
-			caps.Send.Track, caps.Send.Topic, caps.Send.Format, caps.Send.JSON,
+			caps.Send.Track, caps.Send.Topic, caps.Send.Format, caps.Send.Preview, caps.Send.Photo,
+			caps.Send.Reply, caps.Send.Pin, caps.Send.RateLimit, caps.Send.JSON,
 			"the body is read from stdin when no body argument is given"}},
+		{"delete", []string{caps.Delete.Usage, caps.Delete.Track}},
 		{"topic", []string{caps.Topic.Usage, caps.Topic.Rights, caps.Topic.Config}},
 		{"edit", []string{caps.Edit.Usage, caps.Edit.Track, caps.Edit.JSON, caps.Edit.Silent, caps.Edit.State}},
 		{"receive", []string{caps.Receive.Usage, caps.Receive.Window, caps.Receive.JSON,

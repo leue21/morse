@@ -42,6 +42,10 @@ type Message struct {
 	From  string    `json:"from,omitempty"`
 	Text  string    `json:"text,omitempty"`
 	File  *File     `json:"file,omitempty"`
+	// Pinned is set on the notice a group shows when a message is pinned, and
+	// names the message that was. It is the only thing such a notice says, so
+	// without it the notice would be listed as a blank line.
+	Pinned int64 `json:"pinned,omitempty"`
 }
 
 // File is an attachment, named well enough to be listed and identified well
@@ -111,18 +115,33 @@ func (t *Telegram) Updates(ctx context.Context, limit int) (messages []Message, 
 	}
 
 	var updates []struct {
-		Message     *rawMessage `json:"message"`
-		ChannelPost *rawMessage `json:"channel_post"`
+		Message           *rawMessage `json:"message"`
+		ChannelPost       *rawMessage `json:"channel_post"`
+		EditedMessage     *rawMessage `json:"edited_message"`
+		EditedChannelPost *rawMessage `json:"edited_channel_post"`
 	}
 	if err := json.Unmarshal(result, &updates); err != nil {
 		return nil, false, fmt.Errorf("reading updates: %w", err)
 	}
 
 	messages = make([]Message, 0, len(updates))
+	// An edit arrives as an update of its own, carrying the whole message as it
+	// now reads. It replaces the original where that is in the window, so a
+	// message is listed once, in the place it was sent, saying what it says
+	// now. Updates come oldest first, so a later edit overwrites an earlier
+	// one. An edit whose original has already left the window is all that is
+	// left of that message, and is listed as it is.
+	seen := make(map[int64]int, len(updates))
 	for _, update := range updates {
-		raw := update.Message
-		if raw == nil {
+		raw, edited := update.Message, false
+		switch {
+		case raw != nil:
+		case update.ChannelPost != nil:
 			raw = update.ChannelPost
+		case update.EditedMessage != nil:
+			raw, edited = update.EditedMessage, true
+		case update.EditedChannelPost != nil:
+			raw, edited = update.EditedChannelPost, true
 		}
 		// A bot can sit in several chats, and the config names the one morse
 		// belongs to. Anything else is another conversation's business. An
@@ -132,6 +151,11 @@ func (t *Telegram) Updates(ctx context.Context, limit int) (messages []Message, 
 		if raw == nil || raw.Chat.ID != t.chatID {
 			continue
 		}
+		if i, ok := seen[raw.MessageID]; ok && edited {
+			messages[i] = raw.message()
+			continue
+		}
+		seen[raw.MessageID] = len(messages)
 		messages = append(messages, raw.message())
 	}
 	// Counted in updates, not in messages: the question is whether Telegram had
@@ -316,17 +340,20 @@ type rawMessage struct {
 		LastName  string `json:"last_name"`
 		Username  string `json:"username"`
 	} `json:"from"`
-	Text      string    `json:"text"`
-	Caption   string    `json:"caption"`
-	Animation *rawFile  `json:"animation"`
-	Audio     *rawFile  `json:"audio"`
-	Document  *rawFile  `json:"document"`
-	LivePhoto *rawFile  `json:"live_photo"`
-	Sticker   *rawFile  `json:"sticker"`
-	Video     *rawFile  `json:"video"`
-	VideoNote *rawFile  `json:"video_note"`
-	Voice     *rawFile  `json:"voice"`
-	Photo     []rawFile `json:"photo"`
+	Text          string    `json:"text"`
+	Caption       string    `json:"caption"`
+	Animation     *rawFile  `json:"animation"`
+	Audio         *rawFile  `json:"audio"`
+	Document      *rawFile  `json:"document"`
+	LivePhoto     *rawFile  `json:"live_photo"`
+	Sticker       *rawFile  `json:"sticker"`
+	Video         *rawFile  `json:"video"`
+	VideoNote     *rawFile  `json:"video_note"`
+	Voice         *rawFile  `json:"voice"`
+	Photo         []rawFile `json:"photo"`
+	PinnedMessage *struct {
+		MessageID int64 `json:"message_id"`
+	} `json:"pinned_message"`
 }
 
 type rawFile struct {
@@ -358,6 +385,9 @@ func (r *rawMessage) message() Message {
 		}
 	}
 	m.File = r.attachment()
+	if r.PinnedMessage != nil {
+		m.Pinned = r.PinnedMessage.MessageID
+	}
 	return m
 }
 

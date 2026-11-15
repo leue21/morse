@@ -41,6 +41,11 @@ func TestSummary(t *testing.T) {
 		name: "a file that is nothing in particular still shows as one",
 		msg:  notifier.Message{File: &notifier.File{ID: "x"}},
 		want: "[file]",
+	}, {
+		// A pin notice says nothing else, and was a blank line before.
+		name: "a pin notice names what it pinned",
+		msg:  notifier.Message{Pinned: 36},
+		want: "[pinned 36]",
 	}}
 
 	for _, tt := range tests {

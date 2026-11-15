@@ -62,6 +62,13 @@ morse send --track backup --silent "Backup" "done — 3m21s"
   messages stay in their own thread; names come from `telegram.topics` in the
   config. A label remembers its topic; pass the same `--topic` on every call,
   since a different one starts a new message there.
+- `--reply-to <id|label>` attaches a message to an earlier one ("finished"
+  under "started"); `--pin` keeps a status at the top of its topic, pinned
+  once, when the message is new. `--no-preview` stops a URL becoming a card.
+- `--photo <path>` sends a screenshot or graph to be shown inline (10 MB max);
+  `--file` for anything that must arrive byte for byte.
+- `morse delete --track <label>` removes a finished status and forgets the
+  label.
 - For logs and stack traces, add `--code` (monospace block) and, for long
   ones, `--collapse` (folded behind "show more"). On a tracked status, pass
   them on every call: a rewrite without them drops the formatting.

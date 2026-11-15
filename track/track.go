@@ -139,3 +139,17 @@ func pathFor(dir, label string) (string, error) {
 	}
 	return filepath.Join(dir, label+".json"), nil
 }
+
+// Remove forgets a label. A label that was never written down is already
+// forgotten, so that is not an error: a cleanup that runs twice should not
+// fail the second time.
+func Remove(dir, label string) error {
+	path, err := pathFor(dir, label)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("forgetting label %s: %w", label, err)
+	}
+	return nil
+}
