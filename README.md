@@ -1,46 +1,80 @@
 # morse
 
-Send Telegram notifications from the command line. morse is a small,
-single-binary Go CLI that scripts, cron jobs, CI pipelines and AI agents use to
-send alerts to a Telegram chat, keep a status message up to date, upload files,
-and read replies back.
+**Telegram notifications from the command line** — for scripts, cron jobs, CI
+and AI coding agents. One small Go binary; one call per message.
+
+<!-- Screenshot: a tracked status updating in place, and a folded log, as they
+     look in Telegram on a phone. Save it as docs/telegram.png and uncomment:
+<p align="center"><img src="docs/telegram.png" width="360" alt="morse messages in Telegram"></p>
+-->
 
 ```sh
 morse send "Backup failed" "rsync exit 23"
-echo "$logs" | morse send "Build failed on main"
-morse send --silent "Backup finished" "412 files, 3m21s"
-morse send --title "Backup failed" --body "$out"
-morse send --file report.pdf "Nightly report"
-morse send --track nightly "Nightly backup" "✓ done — 412 files"
-morse send --topic ci "CI" "main is red"
 journalctl -u backup -n 40 | morse send --code --collapse "Backup failed"
+morse send --track deploy --silent "Deploy" "● 3/5 hosts"   # same message, updated in place
+morse send --topic ci --pin "CI" "main is red"
 morse receive list | fzf | cut -d' ' -f1 | xargs morse receive get
 ```
 
+## Why not just `curl`?
+
+A `curl` to the Bot API sends a message. morse handles what goes wrong after
+that, and what comes next:
+
+- **It does not lose the alert.** Text is escaped and trimmed to Telegram's
+  limits, so a log full of `<`, `&` or 10,000 lines is delivered rather than
+  rejected. When Telegram says "too many requests", morse waits as told and
+  sends.
+- **One status, not fifty messages.** `--track` keeps a single message current:
+  sent the first time, edited in place after — silently — and replaced if
+  someone deletes it. The caller makes the same call every time.
+- **Readable output.** `--code` for logs and stack traces, `--collapse` to fold
+  a long one behind "show more", `--photo` for a graph or screenshot.
+- **A thread per app.** In a group with topics, `--topic ci` keeps each
+  sender's messages apart, with its own mute and unread count.
+- **It reads back.** Send a command, a key or a file to the bot from your phone,
+  and `morse receive` hands it to your terminal.
+- **Agents can use it blind.** `morse capabilities --json` describes every flag
+  and limit, so a coding agent can text you when it is done, or stuck, without
+  reading this page.
+
+## Quickstart
+
+1. **Install** (or see [Install](#install) for building from source):
+
+   ```sh
+   brew tap leue21/morse https://github.com/leue21/morse && brew install leue21/morse/morse
+   # or
+   go install github.com/leue21/morse@latest
+   ```
+
+2. **Create a bot.** Message [@BotFather](https://t.me/BotFather), send
+   `/newbot`, and keep the token it gives you. Then send your new bot any
+   message, and find your chat id in
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` (`"chat":{"id":…}`).
+
+3. **Send something:**
+
+   ```sh
+   export MORSE_BOT_TOKEN=123456:ABC-DEF...
+   export MORSE_CHAT_ID=12345678
+   morse send "Hello" "from $(hostname)"
+   ```
+
+   To keep the credentials, put them in `~/.config/morse/config.yaml` instead —
+   see [Configuration](#configuration).
+
+## How it works
+
 morse sends one message and exits. Anything that wants to be told something
 decides for itself when to speak, and calls morse to do the speaking: a script,
-a cron job, an agent, a person at a prompt.
+a cron job, an agent, a person at a prompt. There is no daemon, no scheduler
+and nothing to keep running.
 
 It reads the other direction the same way — one call, no daemon — so what was
 sent back to the bot can be found and used from the terminal it was meant for.
 
 ## Install
-
-```sh
-make install
-```
-
-Installs the binary under `~/.local/bin` and — only if there is not one already
-— an example `~/.config/morse/config.yaml` to fill in. No step needs root.
-
-### Go
-
-```sh
-go install github.com/leue21/morse@latest
-```
-
-Installs the binary into `$(go env GOPATH)/bin`. Copy `config.yaml.example` to
-`~/.config/morse/config.yaml`, or set `MORSE_BOT_TOKEN` and `MORSE_CHAT_ID`.
 
 ### Homebrew
 
@@ -70,6 +104,24 @@ chmod 600 ~/.config/morse/config.yaml
 
 Or set `MORSE_BOT_TOKEN` and `MORSE_CHAT_ID` and skip the file entirely.
 Uninstalling leaves the config in place.
+
+### Go
+
+```sh
+go install github.com/leue21/morse@latest
+```
+
+Installs the binary into `$(go env GOPATH)/bin`. Copy `config.yaml.example` to
+`~/.config/morse/config.yaml`, or set `MORSE_BOT_TOKEN` and `MORSE_CHAT_ID`.
+
+### From source
+
+```sh
+make install
+```
+
+Installs the binary under `~/.local/bin` and — only if there is not one already
+— an example `~/.config/morse/config.yaml` to fill in. No step needs root.
 
 ## Configuration
 
