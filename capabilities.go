@@ -21,6 +21,7 @@ type Capabilities struct {
 	Delivery  Delivery        `json:"delivery"`
 	Send      SendContract    `json:"send"`
 	Edit      EditContract    `json:"edit"`
+	Topic     TopicContract   `json:"topic"`
 	Receive   ReceiveContract `json:"receive"`
 }
 
@@ -40,7 +41,17 @@ type SendContract struct {
 	File      string `json:"file"`
 	Track     string `json:"track"`
 	Topic     string `json:"topic"`
+	Format    string `json:"format"`
 	JSON      string `json:"json"`
+}
+
+// TopicContract describes `morse topic`, the one thing about a chat's topics
+// a bot can do that a person cannot do as easily: create one and be sure of
+// its id.
+type TopicContract struct {
+	Usage  string `json:"usage"`
+	Rights string `json:"rights"`
+	Config string `json:"config"`
 }
 
 // EditContract describes `morse edit`, whose whole point is what it does not
@@ -89,17 +100,23 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 			Env:     []string{config.BotTokenEnv, config.ChatIDEnv},
 		},
 		Send: SendContract{
-			Usage:     "morse send [--silent] [--file path] <title> [body]",
+			Usage:     "morse send [--silent] [--code] [--collapse] [--topic id|name] [--file path] <title> [body]",
 			Named:     "--title and --body take the same two values by name, and win over the arguments; safest for a caller building a command from variables",
 			Silent:    "--silent delivers without a notification sound; the message still arrives",
 			BodyStdin: true,
 			File:      "--file uploads that file, with the title and body as its caption; at most 50 MB",
 			Track:     "--track <label> keeps one message current under that label: sent the first time, rewritten in place every time after, so a caller makes the same call whether or not it has reported before. Rewrites never notify",
-			Topic:     "--topic <id> posts into that forum topic of the chat (telegram's message_thread_id), so each sender keeps its own thread; the General topic takes none. A --track label remembers its topic, and a different --topic starts a new message there",
+			Topic:     "--topic <id|name> posts into that forum topic of the chat (telegram's message_thread_id), so each sender keeps its own thread; a name is looked up, in any case, under telegram.topics in the config, and an unknown one is refused rather than sent to General, which takes no --topic. A --track label remembers its topic, and a different --topic starts a new message there",
+			Format:    "--code shows the body as a monospace code block, for logs and stack traces; --collapse folds the body behind \"show more\". Either, both, or neither; edit takes them too, and a rewrite without them drops the formatting",
 			JSON:      "--json prints the message id as JSON, for a caller that would rather hold the id itself than use a label",
 		},
+		Topic: TopicContract{
+			Usage:  "morse topic create [--json] <name>",
+			Rights: "the chat must be a group with topics turned on, and the bot an admin with the right to manage topics",
+			Config: "prints the new topic's id and the YAML to add under telegram.topics so --topic can take its name; morse never edits the config itself",
+		},
 		Edit: EditContract{
-			Usage:  "morse edit <message_id> <title> [body]  |  morse edit --track <label> <title> [body]",
+			Usage:  "morse edit [--code] [--collapse] <message_id> <title> [body]  |  morse edit --track <label> <title> [body]",
 			Track:  "--track <label> names the message morse remembered under that label, and fails if there is none; `morse send --track <label>` sends or rewrites without caring which, and is what a caller reporting repeatedly should use",
 			JSON:   "--json prints the id of the message that now carries the text, which differs from the one edited when a gone message was replaced",
 			Silent: "an edit never notifies anyone — that is the API's behaviour, not a flag — so there is no --silent to pass and nothing arrives on a lock screen",
@@ -143,8 +160,9 @@ func cmdCapabilities(defaultConfig string, args []string, out io.Writer) error {
 		lines []string
 	}{
 		{"send", []string{caps.Send.Usage, caps.Send.Named, caps.Send.Silent, caps.Send.File,
-			caps.Send.Track, caps.Send.Topic, caps.Send.JSON,
+			caps.Send.Track, caps.Send.Topic, caps.Send.Format, caps.Send.JSON,
 			"the body is read from stdin when no body argument is given"}},
+		{"topic", []string{caps.Topic.Usage, caps.Topic.Rights, caps.Topic.Config}},
 		{"edit", []string{caps.Edit.Usage, caps.Edit.Track, caps.Edit.JSON, caps.Edit.Silent, caps.Edit.State}},
 		{"receive", []string{caps.Receive.Usage, caps.Receive.Window, caps.Receive.JSON,
 			caps.Receive.Text, caps.Receive.Save, caps.Receive.Pick}},

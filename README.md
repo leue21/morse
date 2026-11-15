@@ -12,7 +12,8 @@ morse send --silent "Backup finished" "412 files, 3m21s"
 morse send --title "Backup failed" --body "$out"
 morse send --file report.pdf "Nightly report"
 morse send --track nightly "Nightly backup" "✓ done — 412 files"
-morse send --topic 7 "CI" "main is red"
+morse send --topic ci "CI" "main is red"
+journalctl -u backup -n 40 | morse send --code --collapse "Backup failed"
 morse receive list | fzf | cut -d' ' -f1 | xargs morse receive get
 ```
 
@@ -103,10 +104,12 @@ For a group with one topic per app, see [One topic per app](#one-topic-per-app).
 ```
 morse send [--silent] [--file path] <title> [body]   send a message
 morse send --title <t> --body <b>                    the same, named
-morse send --topic <id> <title> [body]               into one topic of the chat
+morse send --topic <id|name> <title> [body]          into one topic of the chat
+morse send --code [--collapse] <title> [body]        body as a code block, folded
 morse send --track <label> [--json] <title> [body]   send, and remember it
 morse edit <message_id> <title> [body]               rewrite a sent message
 morse edit --track <label> [--json] <title> [body]   the same, by label
+morse topic create [--json] <name>                   open a topic, print its id
 morse capabilities [--json]                          what morse accepts
 morse version
 morse help
@@ -142,6 +145,24 @@ message quietly missing the part you wrote.
 `--body ""` is a body you chose to leave empty, and is not the same as omitting
 it: stdin is consulted only when nothing named a body at all.
 
+## Logs and long output
+
+```sh
+journalctl -u nightly -n 40 --no-pager | morse send --code "Nightly failed"
+journalctl -u nightly -n 40 --no-pager | morse send --code --collapse "Nightly failed"
+```
+
+`--code` shows the body as a code block, in monospace, so a log keeps its
+columns and a stack trace its indentation. `--collapse` folds the body into a
+quote that shows its first few lines and a "show more", so a long excerpt is
+there when you want it without pushing everything else up the chat. They work
+on their own or together, on `send` and on `edit`. The title stays plain bold
+either way: it is what a lock screen shows.
+
+A rewrite replaces the formatting along with the text, so pass the same flags
+every time. A tracked status sent with `--code` and rewritten without it comes
+back as plain text.
+
 ## Sending a file
 
 ```sh
@@ -174,25 +195,50 @@ turned on has one thread per subject, each with its own unread count and its
 own mute, in every Telegram client. Give each app a topic and pass it:
 
 ```sh
-morse send --topic 7 --silent "Nightly backup" "✓ done — 412 files"
-morse send --topic 12 "CI" "main is red"
+morse send --topic backup --silent "Nightly backup" "✓ done — 412 files"
+morse send --topic ci "CI" "main is red"
 ```
 
 To set it up:
 
 1. Create a group, turn on **Topics** in its settings, and add the bot as an
-   admin so it can post in every topic.
+   admin so it can post in every topic. Give it the **Manage Topics** right too
+   if you want `morse topic create` to work.
 2. Point `chat_id` (or `MORSE_CHAT_ID`) at the group. Turning on Topics
    converts a basic group into a supergroup, and the supergroup has a **new**
    id — negative, starting with `-100`. An id read before the switch no longer
    works, so read it afterwards.
-3. Create a topic per app, after the bot is an admin. Its id is the number
-   after the group in a link to any message in the topic
+3. Create a topic per app. The easiest way is to let morse do it, which also
+   prints the id:
+
+   ```sh
+   morse topic create ci
+   ```
+
+   A topic made by hand works just as well. Its id is the number after the
+   group in a link to any message in the topic
    (`https://t.me/c/<group>/<topic>/<message>` — the chat id is `-100<group>`),
    or post anything in it and read it back with `morse receive list --json`,
    which shows each message's `topic`. A bot that was not yet an admin when a
    topic was created never sees that it was, so that topic's id has to come
    from a link.
+4. Name the topics in the config, so callers can use names instead of numbers:
+
+   ```yaml
+   telegram:
+     bot_token: "123456:ABC-DEF..."
+     chat_id: -1001234567890
+     topics:
+       backup: 7
+       ci: 12
+   ```
+
+   `morse topic create` prints the lines to paste. morse does not edit the
+   config itself: the file holds your token and your comments. A bot cannot
+   list a chat's topics, which is why the names have to be written down.
+
+`--topic` takes a name from the config, in any case, or a topic id. An unknown
+name is refused, with the names the config has, rather than sent to General.
 
 Trying it from a shell without touching the config:
 

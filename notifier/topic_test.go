@@ -117,3 +117,50 @@ func TestUpdatesReportTheTopicAMessageWasPostedIn(t *testing.T) {
 		t.Errorf("topic = %d on a plain reply, want 0", messages[1].Topic)
 	}
 }
+
+func TestCreateTopicReportsTheNewID(t *testing.T) {
+	srv := testutil.NewFakeAPI(t).
+		Handle("POST", "/bottok/createForumTopic", 200,
+			`{"ok":true,"result":{"message_thread_id":12,"name":"ci","icon_color":7322096}}`).
+		Start()
+	tg := NewTelegram("tok", -1001)
+	tg.baseURL = srv.URL()
+
+	id, err := tg.CreateTopic(context.Background(), "ci")
+	if err != nil || id != 12 {
+		t.Fatalf("got (%d, %v), want (12, nil)", id, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(srv.Requests[0].Body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["name"] != "ci" || payload["chat_id"] != float64(-1001) {
+		t.Errorf("payload = %v", payload)
+	}
+}
+
+// The id is the whole point of the call; a success without one is not one.
+func TestCreateTopicWithoutAnIDFails(t *testing.T) {
+	srv := testutil.NewFakeAPI(t).
+		Handle("POST", "/bottok/createForumTopic", 200, `{"ok":true,"result":{"name":"ci"}}`).
+		Start()
+	tg := NewTelegram("tok", -1001)
+	tg.baseURL = srv.URL()
+
+	if _, err := tg.CreateTopic(context.Background(), "ci"); err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
+func TestCreateTopicWithoutTheRightSaysSo(t *testing.T) {
+	srv := testutil.NewFakeAPI(t).
+		Handle("POST", "/bottok/createForumTopic", 400,
+			`{"ok":false,"error_code":400,"description":"Bad Request: not enough rights to create a topic"}`).
+		Start()
+	tg := NewTelegram("tok", -1001)
+	tg.baseURL = srv.URL()
+
+	if _, err := tg.CreateTopic(context.Background(), "ci"); !errors.Is(err, ErrNoRights) {
+		t.Fatalf("err = %v, want ErrNoRights", err)
+	}
+}
