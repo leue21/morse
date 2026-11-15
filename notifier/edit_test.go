@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"morse/internal/testutil"
+	"github.com/leue21/morse/internal/testutil"
 )
 
 // The id is the only thing that lets anything refer back to a message, and the

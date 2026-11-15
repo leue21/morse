@@ -20,9 +20,9 @@ import (
 	"syscall"
 	"time"
 
-	"morse/config"
-	"morse/notifier"
-	"morse/track"
+	"github.com/leue21/morse/config"
+	"github.com/leue21/morse/notifier"
+	"github.com/leue21/morse/track"
 )
 
 func main() {

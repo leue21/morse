@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"morse/internal/testutil"
+	"github.com/leue21/morse/internal/testutil"
 )
 
 func TestSendSuccess(t *testing.T) {

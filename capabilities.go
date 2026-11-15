@@ -7,7 +7,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"morse/config"
+	"github.com/leue21/morse/config"
 )
 
 // Capabilities is what morse accepts, in a form a caller can read without
@@ -169,7 +169,8 @@ var version string
 
 // buildVersion reports what this binary was built from: the stamped release if
 // there is one, otherwise the revision Go records automatically for a build from
-// a git checkout, so a development build needs nothing kept in step by hand.
+// a git checkout, so a development build needs nothing kept in step by hand,
+// and failing that the module version `go install` fetched.
 func buildVersion() string {
 	if version != "" {
 		return version
@@ -190,6 +191,12 @@ func buildVersion() string {
 		}
 	}
 	if revision == "" {
+		// `go install github.com/leue21/morse@v0.5.0` builds from the module
+		// cache, which has no git metadata, but Go records which version of the
+		// module it fetched. A build from a checkout reports "(devel)" there.
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
 		return "devel"
 	}
 	return revision[:min(len(revision), 12)] + modified

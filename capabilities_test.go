@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"morse/config"
+	"github.com/leue21/morse/config"
 )
 
 func writeConfig(t *testing.T, body string) string {

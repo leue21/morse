@@ -1,6 +1,9 @@
 # morse
 
-Send a notification to Telegram from the command line.
+Send Telegram notifications from the command line. morse is a small,
+single-binary Go CLI that scripts, cron jobs, CI pipelines and AI agents use to
+send alerts to a Telegram chat, keep a status message up to date, upload files,
+and read replies back.
 
 ```sh
 morse send "Backup failed" "rsync exit 23"
@@ -28,6 +31,15 @@ make install
 
 Installs the binary under `~/.local/bin` and — only if there is not one already
 — an example `~/.config/morse/config.yaml` to fill in. No step needs root.
+
+### Go
+
+```sh
+go install github.com/leue21/morse@latest
+```
+
+Installs the binary into `$(go env GOPATH)/bin`. Copy `config.yaml.example` to
+`~/.config/morse/config.yaml`, or set `MORSE_BOT_TOKEN` and `MORSE_CHAT_ID`.
 
 ### Homebrew
 

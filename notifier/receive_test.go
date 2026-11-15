@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"morse/internal/testutil"
+	"github.com/leue21/morse/internal/testutil"
 )
 
 // window is a getUpdates response with one text message, one photo, and one

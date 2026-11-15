@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"morse/internal/testutil"
+	"github.com/leue21/morse/internal/testutil"
 )
 
 // A topic is how one chat keeps several senders apart, so it has to reach
