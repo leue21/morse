@@ -1,4 +1,5 @@
-# Publishes a tagged release to the Homebrew tap.
+# Publishes a tagged release: binaries for every platform, attached to the
+# GitHub release, and the formula in the Homebrew tap.
 #
 # Formula/morse.rb in this repository is the source of truth for the formula
 # body — it is edited alongside the code it installs. Its `url` and `sha256`
@@ -34,6 +35,39 @@ jobs:
 
       - run: go vet ./...
       - run: go test ./... -count=1
+
+  # Builds a binary for every platform and attaches them to the tag's GitHub
+  # release, creating the release if there is none yet — so a tag push is the
+  # whole of publishing, and nobody without Go or Homebrew is left out.
+  binaries:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: scripts/build-release.sh "$TAG" dist
+
+      - name: Attach to the release
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "morse $TAG" --generate-notes --verify-tag
+          fi
+          # --clobber so re-running for a tag (workflow_dispatch) replaces the
+          # files rather than failing on names already taken.
+          gh release upload "$TAG" dist/* --clobber
 
   tap:
     needs: test
