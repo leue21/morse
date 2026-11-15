@@ -210,7 +210,7 @@ func cmdSend(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	// each time, and the label follows it.
 	var tracked int64
 	if *f.label != "" && *file == "" {
-		if tracked, err = trackedID(*f.label, *topic); err != nil {
+		if tracked, err = trackedID(*f.label, cfg.Telegram.ChatID, *topic); err != nil {
 			return err
 		}
 	}
@@ -278,10 +278,11 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 		return err
 	}
 
-	messageID, topic, rest, err := editTarget(f.fs.Args(), *f.label)
+	target, rest, err := editTarget(f.fs.Args(), *f.label)
 	if err != nil {
 		return err
 	}
+	messageID, topic := target.messageID, target.topic
 	title, body, err := f.message(rest, false)
 	if err != nil {
 		return err
@@ -289,6 +290,14 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 	cfg, err := config.Load(*f.configPath)
 	if err != nil {
 		return err
+	}
+	// A message id means nothing outside its chat: the same number in another
+	// chat is another message, or none. edit --track is the strict form, so a
+	// label left behind by a config that has since moved is reported rather
+	// than quietly started over in the new chat.
+	if target.chatID != 0 && target.chatID != cfg.Telegram.ChatID {
+		return fmt.Errorf("label %s names a message in chat %d, but the config now points at chat %d; `morse send --track %s ...` starts it there",
+			*f.label, target.chatID, cfg.Telegram.ChatID, *f.label)
 	}
 	tg := notifier.NewTelegram(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
 
@@ -321,24 +330,31 @@ func cmdEdit(ctx context.Context, defaultConfig string, args []string, out io.Wr
 // second place to look, and a first argument that is not a number is a mistake
 // worth naming rather than a title to send.
 //
-// The topic comes along with a label, since the record knows it; an explicit
-// id has none, and needs none, because an edit happens wherever the message is.
-func editTarget(args []string, label string) (messageID, topic int64, rest []string, err error) {
+// The chat and topic come along with a label, since the record knows them; an
+// explicit id has neither, and needs neither, because it is taken to mean a
+// message in the configured chat and an edit happens wherever the message is.
+func editTarget(args []string, label string) (t target, rest []string, err error) {
 	if label != "" {
 		rec, err := recall(label)
 		if err != nil {
-			return 0, 0, nil, err
+			return target{}, nil, err
 		}
-		return rec.MessageID, rec.Topic, args, nil
+		return target{messageID: rec.MessageID, chatID: rec.ChatID, topic: rec.Topic}, args, nil
 	}
 	if len(args) == 0 {
-		return 0, 0, nil, errors.New("edit needs a message id, or --track <label>")
+		return target{}, nil, errors.New("edit needs a message id, or --track <label>")
 	}
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("%q is not a message id; pass one from `morse send --json`, or name the message with --track", args[0])
+		return target{}, nil, fmt.Errorf("%q is not a message id; pass one from `morse send --json`, or name the message with --track", args[0])
 	}
-	return id, 0, args[1:], nil
+	return target{messageID: id}, args[1:], nil
+}
+
+// target is the message an edit is about. chatID and topic are 0 when only an
+// id was given, which says nothing about either.
+type target struct {
+	messageID, chatID, topic int64
 }
 
 // remember writes down which message a label now stands for.
@@ -376,11 +392,14 @@ func recall(label string) (*track.Record, error) {
 // problem to report but a message to send: it is what every label looks like
 // the first time, and what one looks like again after its state file is lost.
 //
-// A label whose message lives in another topic is reported as 0 too. A message
-// cannot be moved between topics, so rewriting it would keep reporting where
-// the caller has stopped asking for it; a fresh one where it asked is what the
-// call means, and the label follows it there.
-func trackedID(label string, topic int64) (int64, error) {
+// A label whose message lives in another chat or topic is reported as 0 too. A
+// message cannot be moved between topics, so rewriting it would keep reporting
+// where the caller has stopped asking for it; a fresh one where it asked is what
+// the call means, and the label follows it there. Another chat is the same
+// case and a worse one: a message id is only unique within its chat, so the
+// recorded id would name some other message in the new one — or none — and the
+// edit would land on the wrong message rather than merely the old one.
+func trackedID(label string, chatID, topic int64) (int64, error) {
 	dir, err := track.Dir()
 	if err != nil {
 		return 0, err
@@ -391,7 +410,7 @@ func trackedID(label string, topic int64) (int64, error) {
 		return 0, nil
 	case err != nil:
 		return 0, err
-	case rec.Topic != topic:
+	case rec.ChatID != chatID, rec.Topic != topic:
 		return 0, nil
 	}
 	return rec.MessageID, nil

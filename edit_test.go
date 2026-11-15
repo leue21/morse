@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,12 +14,12 @@ import (
 )
 
 func TestEditTargetFromAnExplicitID(t *testing.T) {
-	id, _, rest, err := editTarget([]string{"4242", "Backup", "42", "files copied"}, "")
+	tgt, rest, err := editTarget([]string{"4242", "Backup", "42", "files copied"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != 4242 {
-		t.Errorf("message id = %d, want 4242", id)
+	if tgt.messageID != 4242 || tgt.chatID != 0 {
+		t.Errorf("got %+v, want message 4242 and no chat", tgt)
 	}
 	// The number after the title is text, not another id to notice.
 	if strings.Join(rest, " ") != "Backup 42 files copied" {
@@ -26,14 +29,14 @@ func TestEditTargetFromAnExplicitID(t *testing.T) {
 
 // Silently treating it as a title would edit nothing and report success.
 func TestEditTargetRejectsAnIDThatIsNotOne(t *testing.T) {
-	_, _, _, err := editTarget([]string{"Backup", "done"}, "")
+	_, _, err := editTarget([]string{"Backup", "done"}, "")
 	if err == nil || !strings.Contains(err.Error(), "is not a message id") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestEditTargetNeedsSomethingToEdit(t *testing.T) {
-	_, _, _, err := editTarget(nil, "")
+	_, _, err := editTarget(nil, "")
 	if err == nil || !strings.Contains(err.Error(), "message id") {
 		t.Fatalf("err = %v", err)
 	}
@@ -48,12 +51,12 @@ func TestEditTargetFromALabel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, _, rest, err := editTarget([]string{"3", "files", "copied"}, "nightly-backup")
+	tgt, rest, err := editTarget([]string{"3", "files", "copied"}, "nightly-backup")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != 77 {
-		t.Errorf("message id = %d, want 77", id)
+	if tgt.messageID != 77 {
+		t.Errorf("message id = %d, want 77", tgt.messageID)
 	}
 	if strings.Join(rest, " ") != "3 files copied" {
 		t.Errorf("rest = %q", rest)
@@ -64,7 +67,7 @@ func TestEditTargetFromALabel(t *testing.T) {
 // to do instead of leaving the caller to guess.
 func TestEditTargetFromALabelThatWasNeverSent(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	_, _, _, err := editTarget([]string{"Title"}, "nightly-backup")
+	_, _, err := editTarget([]string{"Title"}, "nightly-backup")
 	if !errors.Is(err, track.ErrNoSuchLabel) {
 		t.Fatalf("err = %v, want ErrNoSuchLabel", err)
 	}
@@ -78,7 +81,7 @@ func TestEditTargetFromALabelThatWasNeverSent(t *testing.T) {
 // a lost state file both look like.
 func TestTrackedIDOfAnUnknownLabelIsNotAnError(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	id, err := trackedID("never-sent", 0)
+	id, err := trackedID("never-sent", 42, 0)
 	if err != nil || id != 0 {
 		t.Fatalf("got (%d, %v), want (0, nil)", id, err)
 	}
@@ -89,7 +92,7 @@ func TestTrackedIDFindsAKnownLabel(t *testing.T) {
 	if err := remember("nightly-backup", 77, 42, 0, "Nightly backup", "running"); err != nil {
 		t.Fatal(err)
 	}
-	id, err := trackedID("nightly-backup", 0)
+	id, err := trackedID("nightly-backup", 42, 0)
 	if err != nil || id != 77 {
 		t.Fatalf("got (%d, %v), want (77, nil)", id, err)
 	}
@@ -100,7 +103,7 @@ func TestTrackedIDFindsAKnownLabel(t *testing.T) {
 // caller did not ask for.
 func TestTrackedIDStillRefusesALabelThatIsNotAName(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	if _, err := trackedID("../../.ssh/config", 0); err == nil {
+	if _, err := trackedID("../../.ssh/config", 42, 0); err == nil {
 		t.Fatal("expected a refusal")
 	}
 }
@@ -137,13 +140,13 @@ func TestTrackedIDInAnotherTopicStartsANewMessage(t *testing.T) {
 	if err := remember("nightly-backup", 77, 42, 7, "Nightly backup", "running"); err != nil {
 		t.Fatal(err)
 	}
-	if id, err := trackedID("nightly-backup", 7); err != nil || id != 77 {
+	if id, err := trackedID("nightly-backup", 42, 7); err != nil || id != 77 {
 		t.Fatalf("same topic: got (%d, %v), want (77, nil)", id, err)
 	}
-	if id, err := trackedID("nightly-backup", 9); err != nil || id != 0 {
+	if id, err := trackedID("nightly-backup", 42, 9); err != nil || id != 0 {
 		t.Fatalf("other topic: got (%d, %v), want (0, nil)", id, err)
 	}
-	if id, err := trackedID("nightly-backup", 0); err != nil || id != 0 {
+	if id, err := trackedID("nightly-backup", 42, 0); err != nil || id != 0 {
 		t.Fatalf("no topic: got (%d, %v), want (0, nil)", id, err)
 	}
 }
@@ -155,12 +158,12 @@ func TestEditTargetCarriesTheLabelsTopic(t *testing.T) {
 	if err := remember("nightly-backup", 77, 42, 7, "Nightly backup", "running"); err != nil {
 		t.Fatal(err)
 	}
-	id, topic, _, err := editTarget([]string{"done"}, "nightly-backup")
+	tgt, _, err := editTarget([]string{"done"}, "nightly-backup")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != 77 || topic != 7 {
-		t.Errorf("got message %d in topic %d, want 77 in 7", id, topic)
+	if tgt.messageID != 77 || tgt.chatID != 42 || tgt.topic != 7 {
+		t.Errorf("got %+v, want message 77 in chat 42, topic 7", tgt)
 	}
 }
 
@@ -172,5 +175,36 @@ func TestExplainTopicNamesTheTopic(t *testing.T) {
 	other := errors.New("network down")
 	if explainTopic(other, 999) != other {
 		t.Error("an unrelated error was rewritten")
+	}
+}
+
+// A message id is only unique within its chat. After the config moves to
+// another chat, the recorded id names some other message there, so the label
+// has to start over instead of editing it.
+func TestTrackedIDInAnotherChatStartsANewMessage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := remember("nightly-backup", 77, 42, 0, "Nightly backup", "running"); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := trackedID("nightly-backup", -1001234, 0); err != nil || id != 0 {
+		t.Fatalf("got (%d, %v), want (0, nil)", id, err)
+	}
+}
+
+// edit --track is the strict form, so a label left in another chat by a config
+// that has since moved is an error that says how to start over, not an edit of
+// whatever carries the same id in the new chat.
+func TestEditTrackRefusesALabelFromAnotherChat(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("MORSE_BOT_TOKEN", "tok")
+	t.Setenv("MORSE_CHAT_ID", "-1001234")
+	if err := remember("nightly-backup", 77, 42, 0, "Nightly backup", "running"); err != nil {
+		t.Fatal(err)
+	}
+	err := cmdEdit(context.Background(), filepath.Join(t.TempDir(), "none.yaml"),
+		[]string{"--track", "nightly-backup", "done"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "now points at chat -1001234") ||
+		!strings.Contains(err.Error(), "morse send --track nightly-backup") {
+		t.Fatalf("err = %v", err)
 	}
 }

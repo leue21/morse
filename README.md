@@ -206,7 +206,9 @@ chat does not have is refused rather than delivered somewhere else.
 A `--track` label remembers its topic, so a message that was deleted is
 replaced in the topic it was in, by `send` and by `edit` alike. A message cannot
 move between topics, so `send --track` with a different `--topic` than last time
-starts a new message there and points the label at it.
+starts a new message there and points the label at it. Moving the config to
+another chat works the same way: each label starts a new message in the new
+chat on its next `send --track`, and `edit --track` refuses until it has.
 
 Filtering by app is something the chat does, not morse: a bot never sees the
 messages it sent itself, so `morse receive` cannot read your apps' notifications
