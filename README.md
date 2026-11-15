@@ -44,7 +44,7 @@ that, and what comes next:
    [latest release](https://github.com/leue21/morse/releases/latest), or:
 
    ```sh
-   brew tap leue21/morse https://github.com/leue21/morse && brew install leue21/morse/morse
+   brew install leue21/tap/morse
    # or
    go install github.com/leue21/morse@latest
    ```
@@ -99,17 +99,22 @@ the same release lists every archive's checksum, for `sha256sum -c SHA256SUMS
 
 ### Homebrew
 
-The repository is its own tap, so there is no second repo to add:
+The formula lives in the [leue21/homebrew-tap](https://github.com/leue21/homebrew-tap)
+tap, which `brew` adds on first use:
 
 ```sh
-brew tap leue21/morse https://github.com/leue21/morse
-brew install leue21/morse/morse
+brew install leue21/tap/morse
 ```
+
+Each release updates the tap's formula, so `brew upgrade` picks up new
+versions once `brew update` has fetched the tap. `Formula/morse.rb` in this
+repository is only the template the release workflow fills in; its version is
+a placeholder, so do not tap this repository directly.
 
 The name has to be given in full. Homebrew's own core tap has an unrelated
 `morse` — a morse code trainer — and a bare `brew install morse` installs that
-one instead. The same goes for `brew upgrade leue21/morse/morse` and
-`brew uninstall leue21/morse/morse`.
+one instead. The same goes for `brew upgrade leue21/tap/morse` and
+`brew uninstall leue21/tap/morse`.
 
 To follow `main` instead of the latest tag, add `--HEAD`.
 
