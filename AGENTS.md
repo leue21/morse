@@ -35,6 +35,11 @@ every platform with `scripts/build-release.sh`, creates the GitHub release
 Homebrew tap. Do not create the release by hand first — the workflow creates it
 when missing, and uploads with `--clobber`, so re-running a tag is safe.
 Archive names carry no version, so `releases/latest/download/<name>` is stable.
+`install.sh` relies on that, and on the archive layout (`<name>/morse` inside
+`<name>.tar.gz`) and `SHA256SUMS`: a change to `build-release.sh` that moves
+any of them breaks the curl install. CI runs the script against archives built
+from the same commit, on Linux and macOS. It stays POSIX `sh` (it is piped into
+whatever `sh` is) and never needs root.
 
 ## Architecture
 

@@ -40,10 +40,11 @@ that, and what comes next:
 
 ## Quickstart
 
-1. **Install** — download a binary from the
-   [latest release](https://github.com/leue21/morse/releases/latest), or:
+1. **Install:**
 
    ```sh
+   curl -fsSL https://raw.githubusercontent.com/leue21/morse/main/install.sh | sh
+   # or
    brew install leue21/tap/morse
    # or
    go install github.com/leue21/morse@latest
@@ -76,6 +77,26 @@ It reads the other direction the same way — one call, no daemon — so what wa
 sent back to the bot can be found and used from the terminal it was meant for.
 
 ## Install
+
+### Install script
+
+On Linux, macOS or FreeBSD:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/leue21/morse/main/install.sh | sh
+```
+
+It downloads the right archive from the latest release, checks it against the
+release's `SHA256SUMS`, and puts `morse` in `~/.local/bin` — no root, and no
+config written. Run it again to update. To pin a release or choose the
+directory, set these for `sh`, not `curl`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/leue21/morse/main/install.sh \
+  | MORSE_VERSION=v0.6.0 MORSE_INSTALL_DIR=/usr/local/bin sh
+```
+
+The [script](install.sh) is short; read it before piping it to a shell.
 
 ### Download a binary
 

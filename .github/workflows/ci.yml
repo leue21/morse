@@ -41,3 +41,28 @@ jobs:
       # found in its pull request, not when a tag is pushed.
       - name: Build every release platform
         run: scripts/build-release.sh "ci-${GITHUB_SHA::7}" dist
+
+  # install.sh against archives this commit built, served from disk, so a
+  # change to the archive layout and the script that unpacks it are checked
+  # together. macOS too: its shasum, mktemp and uname differ from Linux's.
+  install-script:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck install.sh scripts/build-release.sh
+
+      - name: Install from locally built archives
+        run: |
+          scripts/build-release.sh v0.0.0-ci dist
+          MORSE_BASE_URL="file://$PWD/dist" MORSE_INSTALL_DIR="$RUNNER_TEMP/bin" sh install.sh
+          "$RUNNER_TEMP/bin/morse" version | grep -qx 'morse v0.0.0-ci'
