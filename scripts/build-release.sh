@@ -68,5 +68,8 @@ for target in $targets; do
     echo "built $name"
 done
 
-(cd "$out" && sha256sum morse_* > SHA256SUMS)
+# shasum where sha256sum is missing (macOS); both write "<hash>  <file>".
+sum=sha256sum
+command -v sha256sum >/dev/null 2>&1 || sum="shasum -a 256"
+(cd "$out" && $sum morse_* > SHA256SUMS)
 echo "wrote $out/SHA256SUMS"
